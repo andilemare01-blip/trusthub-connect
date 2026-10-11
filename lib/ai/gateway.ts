@@ -1,0 +1,145 @@
+import type { AiConfigStatus } from "./config.ts";
+import type { AiSpendLedger } from "./spend-ledger.ts";
+
+/**
+ * Why a provider call did not produce text. Each value is a distinct,
+ * diagnosable outcome — never a secret, a key, or message content:
+ * `invalid_credentials` (HTTP 401), `model_access` (402/403/404 — the
+ * model is not reachable with this key, e.g. no access or not found),
+ * `rate_limited` (429), `upstream` (5xx), `timeout` (abort), and
+ * `invalid_response` (the provider answered but the payload had no usable
+ * content). `unavailable` is the remaining catch-all transport/4xx case.
+ */
+export type AiFailure = "disabled" | "budget_exhausted" | "duplicate" | "too_large" | "ledger_unavailable" | "invalid_credentials" | "model_access" | "rate_limited" | "upstream" | "timeout" | "unavailable" | "invalid_response";
+export type AiResult = { ok: true; text: string; costMicroUsd: number } | { ok: false; reason: AiFailure; providerMessage?: string };
+
+export interface AiRequest {
+  /** Stable per logical call (e.g. inbound provider message id + purpose); a repeat never calls the provider again. */
+  key: string;
+  purpose: string;
+  system: string;
+  user: string;
+  json?: boolean;
+}
+
+const CHARS_PER_TOKEN = 3;
+
+/** One provider call per key, no retries, hard input/output limits and a recorded-spend ceiling. */
+export class AiGateway {
+  private readonly status: AiConfigStatus;
+  private readonly ledger: AiSpendLedger;
+  private readonly fetchImpl: typeof fetch;
+  private readonly now: () => string;
+  private readonly inFlight = new Set<string>();
+  private tripped = false;
+
+  constructor(status: AiConfigStatus, ledger: AiSpendLedger, fetchImpl: typeof fetch = fetch, now: () => string = () => new Date().toISOString()) {
+    this.status = status; this.ledger = ledger; this.fetchImpl = fetchImpl; this.now = now;
+  }
+
+  get enabled(): boolean { return this.status.enabled && !this.tripped; }
+
+  async complete(request: AiRequest): Promise<AiResult> {
+    if (!this.status.enabled || this.tripped) return { ok: false, reason: "disabled" };
+    const { config } = this.status;
+    if (this.inFlight.has(request.key)) return { ok: false, reason: "duplicate" };
+    const inputTokens = Math.ceil((request.system.length + request.user.length) / CHARS_PER_TOKEN);
+    if (inputTokens > config.maxInputTokens) return { ok: false, reason: "too_large" };
+    const worstCase = Math.ceil(inputTokens * config.inputUsdPerMillion + config.maxOutputTokens * config.outputUsdPerMillion);
+    this.inFlight.add(request.key);
+    try {
+      let total: number;
+      try {
+        if (await this.ledger.hasCall(request.key)) return { ok: false, reason: "duplicate" };
+        total = await this.ledger.totalMicroUsd();
+      } catch { return { ok: false, reason: "ledger_unavailable" }; }
+      if (total + worstCase > config.spendLimitMicroUsd) return { ok: false, reason: "budget_exhausted" };
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+      let response: Response;
+      try {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        };
+        // OpenRouter attribution is optional and contains no secrets.
+        if (config.httpReferer) headers["HTTP-Referer"] = config.httpReferer;
+        if (config.appTitle) headers["X-OpenRouter-Title"] = config.appTitle;
+        response = await this.fetchImpl(`${config.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            model: config.model,
+            temperature: 0,
+            max_tokens: config.maxOutputTokens,
+            messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }],
+            ...(request.json ? { response_format: { type: "json_object" } } : {}),
+          }),
+          signal: controller.signal,
+          cache: "no-store",
+        });
+      } catch (error) {
+        // The provider may have processed the request, so charge the worst case.
+        await this.record(request, config.model, inputTokens, config.maxOutputTokens, worstCase, true);
+        return { ok: false, reason: error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /abort/i.test(error.message)) ? "timeout" : "unavailable" };
+      } finally { clearTimeout(timer); }
+
+      if (response.status === 429) return { ok: false, reason: "rate_limited" };
+      if (!response.ok) {
+        // Surface the provider's own message so a 400 is diagnosable instead of a silent "unavailable".
+        const providerMessage = await readProviderMessage(response);
+        // A 4xx the provider rejected before generating tokens consumed none, so no spend is recorded.
+        // A 5xx may have processed the request server-side, so the worst case is charged.
+        if (response.status >= 500) await this.record(request, config.model, inputTokens, config.maxOutputTokens, worstCase, true);
+        return { ok: false, reason: providerFailureReason(response.status), providerMessage };
+      }
+      const data: unknown = await response.json().catch(() => null);
+      const body = data && typeof data === "object" ? data as { choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } } : null;
+      const promptTokens = body?.usage?.prompt_tokens;
+      const completionTokens = body?.usage?.completion_tokens;
+      const reported = typeof promptTokens === "number" && typeof completionTokens === "number" && promptTokens >= 0 && completionTokens >= 0;
+      const cost = reported ? Math.ceil(promptTokens * config.inputUsdPerMillion + completionTokens * config.outputUsdPerMillion) : worstCase;
+      await this.record(request, config.model, reported ? promptTokens : inputTokens, reported ? completionTokens : config.maxOutputTokens, cost, !reported);
+      const text = body?.choices?.[0]?.message?.content;
+      if (typeof text !== "string" || !text.trim()) return { ok: false, reason: "invalid_response" };
+      return { ok: true, text, costMicroUsd: cost };
+    } finally { this.inFlight.delete(request.key); }
+  }
+
+  private async record(request: AiRequest, model: string, inputTokens: number, outputTokens: number, costMicroUsd: number, estimated: boolean): Promise<void> {
+    try {
+      await this.ledger.record({ key: request.key, purpose: request.purpose, model, inputTokens, outputTokens, costMicroUsd, estimated, at: this.now() });
+    } catch {
+      // Spend can no longer be tracked reliably, so stop optional AI for this instance.
+      this.tripped = true;
+    }
+  }
+}
+
+/** Maps a provider HTTP status to a diagnosable failure reason. Never includes the status body. */
+function providerFailureReason(status: number): AiFailure {
+  if (status === 401) return "invalid_credentials";
+  if (status === 402 || status === 403 || status === 404) return "model_access";
+  if (status >= 500) return "upstream";
+  return "unavailable";
+}
+
+/** Reads the provider's error body without consuming it for retries; never logs the API key. */
+async function readProviderMessage(response: Response): Promise<string | undefined> {
+  try {
+    const text = await response.text();
+    if (!text) return undefined;
+    let parsed: unknown;
+    try { parsed = JSON.parse(text); } catch { return text.slice(0, 500); }
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as { error?: { message?: unknown } | string | null; message?: unknown };
+      const inner = obj.error;
+      const message = typeof inner === "string" ? inner : inner && typeof inner === "object" && typeof inner.message === "string" ? inner.message : typeof obj.message === "string" ? obj.message : null;
+      if (message) return message.slice(0, 500);
+    }
+    return text.slice(0, 500);
+  } catch {
+    return undefined;
+  }
+}

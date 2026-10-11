@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/community-missions", "schedule": "0 7 * * *" }
+  ]
+}

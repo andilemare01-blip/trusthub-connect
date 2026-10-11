@@ -1,3 +1,5 @@
-# lib/trusthub
+# TrustHub read adapter
 
-Placeholder for persistent TrustHub user identity integration. Not yet implemented.
+`createTrustHubClient()` is a read-only adapter over existing TrustHub `businesses` and `communities` records. Reads require server-side `SUPABASE_URL` and a trusted server key: prefer `SUPABASE_SECRET_KEY`; `SUPABASE_SERVICE_ROLE_KEY` remains a legacy fallback. Both variables must stay outside browser bundles and source control. The server client is guarded by `server-only` and does not use the anon/publishable key because the live tables have no anon SELECT policy.
+
+Missing configuration raises a typed error. Resolver source failures are recorded as `unavailable`, not mistaken for an empty search. Business results preserve TrustHub IDs and upstream source metadata. Community rows use the documented city-level schema; they do not have an area field. This adapter does not read reviews or business hours because those sources remain outside the initial adapter scope. Runtime state, action, source attempts, and outcomes are mapped to Migration 001's coarse conversation status plus message `metadata` JSON; coordinator-only states are not written into the SQL status column. `communityKey` is not a UUID and must be resolved to a `communities.id` before persistence.

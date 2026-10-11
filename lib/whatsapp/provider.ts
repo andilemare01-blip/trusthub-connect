@@ -1,0 +1,49 @@
+import type { ConversationMessage } from "@/types/conversation";
+
+export class NotConnectedError extends Error {
+  constructor(method: string) {
+    super(`WhatsAppProvider.${method} is not connected yet. No WhatsApp provider credentials have been configured.`);
+    this.name = "NotConnectedError";
+  }
+}
+
+export interface OutboundWhatsAppMessage { toPhoneNumber: string; text: string; correlationId?: string; }
+export interface WhatsAppInboundMessage {
+  providerMessageId: string;
+  senderPhoneNumber: string;
+  text: string;
+  timestamp: string;
+  media: WhatsAppMediaMetadata[];
+}
+export interface WhatsAppMediaMetadata {
+  providerMediaId: string;
+  kind: "voice" | "photo" | "video" | "document" | "sticker" | "location" | "unknown";
+  mimeType?: string;
+  fileName?: string;
+  caption?: string;
+  sha256?: string;
+  latitude?: number;
+  longitude?: number;
+  locationName?: string;
+  locationAddress?: string;
+}
+export interface WhatsAppDeliveryMetadata { providerMessageId: string; status: "accepted" | "delivered" | "failed"; acceptedAt: string; }
+
+/** Replaceable transport surface. Live implementations must validate provider signatures and auth. */
+export interface WhatsAppProvider {
+  sendMessage(message: OutboundWhatsAppMessage): Promise<WhatsAppDeliveryMetadata | void>;
+  parseIncomingWebhook(payload: unknown): Promise<WhatsAppInboundMessage | null>;
+  verifyWebhookSignature?(rawBody: string, signature: string | null): Promise<boolean> | boolean;
+}
+
+class NotConnectedWhatsAppProvider implements WhatsAppProvider {
+  async sendMessage(): Promise<WhatsAppDeliveryMetadata> { throw new NotConnectedError("sendMessage"); }
+  async parseIncomingWebhook(): Promise<WhatsAppInboundMessage | null> { throw new NotConnectedError("parseIncomingWebhook"); }
+}
+
+export function createWhatsAppProvider(): WhatsAppProvider { return new NotConnectedWhatsAppProvider(); }
+
+/** Compatibility helper for the existing normalized conversation message shape. */
+export function toConversationMessage(message: WhatsAppInboundMessage, conversationId: string): ConversationMessage {
+  return { id: message.providerMessageId, providerMessageId: message.providerMessageId, conversationId, channel: "whatsapp", direction: "inbound", sender: "user", text: message.text, createdAt: message.timestamp };
+}

@@ -1,0 +1,89 @@
+.page {
+  min-height: 100%;
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.header h1 {
+  font-size: 1.5rem;
+}
+
+.notice {
+  font-size: 0.85rem;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  width: fit-content;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.section h2 {
+  font-size: 1.1rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.cardLabel {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+.cardValue {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.panelGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.panel {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 140px;
+}
+
+.panel h3 {
+  font-size: 0.95rem;
+}
+
+.emptyState {
+  font-size: 0.85rem;
+  color: #9ca3af;
+}

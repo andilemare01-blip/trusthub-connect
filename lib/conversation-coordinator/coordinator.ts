@@ -1,0 +1,337 @@
+import type { AnswerResolver } from "../answer-resolution/resolver";
+import type { NormalizedRequest, ResolutionResult, ResolverContext } from "../answer-resolution/types";
+import type { ConversationMessage } from "../../types/conversation";
+import type { CoordinatorAction, IncomingTurn, OutcomeConfirmation, RuntimeConversation, RuntimeState, TurnResult } from "./types";
+import type { RuntimeConversationRepository } from "./repository";
+import { createAnswerGenerator } from "../answer-resolution/response-generator.ts";
+import type { AnswerGenerator } from "@/types/answer";
+import { assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, type WisdomLibrary } from "./wisdom-library.ts";
+import { parseNotificationPreference, preferenceReply } from "../notifications/community-missions.ts";
+import type { IdentityProvisioner } from "../identity/provisioner.ts";
+import { parseProfileCreationRequest } from "../identity/profile-intent.ts";
+
+const NON_ANSWER = /^(?:thanks?(?: you)?|thank u|ok(?:ay)?|yes|yeah|yep|no|nope|sure|cool|alright|fine|good|please|nothing|never ?mind|not now|hi|hello|hey)$/i;
+const CITY_QUESTION = "Which city should I look in? An area is optional.";
+const CATEGORY_QUESTION = "What type of business or service are you looking for?";
+
+/** True when the place name resolves to a known location; supplied by the runtime from TrustHub communities. */
+export type CityValidator = (city: string, country: string | null) => Promise<boolean>;
+
+const LEADING_LOCATION_WORDS = /^(?:(?:it'?s|its|i'?m|i am|we are|somewhere|anywhere|anywhere at all)\s+)?(?:in|around|near|within)\s+/i;
+const LEADING_ARTICLE = /^(?:a|an|the|some|any)\s+/i;
+const LOOK_IN_PREFIX = /^(?:please\s+)?(?:(?:can you|could you)\s+)?(?:look|search|check|try)(?:\s+(?:for it|there|again))?\s+/i;
+const TRAILING_PLACE_WORD = /\s+(?:community|city|town|area)$/i;
+/** A message that explicitly asks to search somewhere, e.g. "Look in the Harare community". */
+export const LOCATION_REDIRECT = /^(?:please\s+)?(?:(?:can you|could you)\s+)?(?:look|search|check|try)\b.*\b(?:in|around|near|within)\s+\S/i;
+
+function placeFrom(cleaned: string): string {
+  return cleaned.replace(LOOK_IN_PREFIX, "").replace(LEADING_LOCATION_WORDS, "").replace(/^anywhere\s*/i, "").replace(LEADING_ARTICLE, "").replace(TRAILING_PLACE_WORD, "").trim();
+}
+
+/** A bare place name such as "Harare" starts a search whose category is still to be asked; null unless the place is recognised. */
+export async function locationOnlyRequest(text: string, validate: CityValidator): Promise<NormalizedRequest | null> {
+  const cleaned = text.trim().replace(/[?.!,;:]+$/, "").trim();
+  if (!cleaned || cleaned.length > 40 || isGreeting(cleaned) || NON_ANSWER.test(cleaned)) return null;
+  const place = cleaned.replace(LEADING_LOCATION_WORDS, "").replace(/^anywhere\s*/i, "").trim();
+  if (!place || place.split(/\s+/).length > 3 || /\d/.test(place) || !(await validate(place, "Zimbabwe"))) return null;
+  return { text: text.trim(), intent: "find_business", category: null, location: { country: "Zimbabwe", city: place }, questionType: "business_discovery" };
+}
+
+/** Applies a short reply to the one detail the pending clarification asked for; null when it cannot be read as that detail. */
+export function continueClarifiedRequest(pending: NormalizedRequest, reply: string, allowCityChange = false): NormalizedRequest | null {
+  const cleaned = reply.trim().replace(/[?.!,;:]+$/, "").trim();
+  if (!cleaned || cleaned.length > 60 || isGreeting(cleaned) || NON_ANSWER.test(cleaned)) return null;
+  const text = `${pending.text} ${reply.trim()}`.trim();
+  if (!pending.category) return { ...pending, text, category: cleaned.replace(LEADING_LOCATION_WORDS, "").replace(LEADING_ARTICLE, "") || null };
+  if (pending.location?.city && !allowCityChange) return null;
+  const place = placeFrom(cleaned);
+  if (!place || place.split(/\s+/).length > 4 || /\d/.test(place)) return null;
+  const [city, country] = place.split(",").map((part) => part.trim()).filter(Boolean);
+  return { ...pending, text, location: { ...pending.location, city: city ?? null, country: country ?? pending.location?.country ?? null } };
+}
+
+/** Closes a results message; a later "yes" or "no" still records the outcome through the existing confirmation path. */
+export const OUTCOME_FOLLOW_UP = "If one of these works out, let me know. If not, say *no luck* and I'll look wider.";
+
+function acknowledgement(request: NormalizedRequest | null, resolution: ResolutionResult): string {
+  if (!request?.category || (request.questionType !== "business_discovery" && request.questionType !== "provider_recommendation")) return "";
+  const listings = resolution.evidence.filter((item) => item.kind === "listing").length;
+  const where = request.location?.city ? ` in ${request.location.city}${request.location.area ? `, ${request.location.area}` : ""}` : "";
+  const found = listings === 0 ? "Here's what TrustHub has" : listings === 1 ? "I found one match on TrustHub" : `I found ${Math.min(listings, 8)}${listings > 8 ? " of the closest" : ""} on TrustHub`;
+  return `Got it: ${request.category}${where}. ${found}${resolution.status === "partially_answered" ? ", though some details are missing" : ""}:`;
+}
+
+/**
+ * A confirmed answer counts as a match only when the answer itself named a
+ * TrustHub-listed business/provider for a discovery or recommendation request.
+ * A confirmed fact answer stays a useful answer, never an invented match.
+ */
+export function matchConfirmedByConfirmation(request: NormalizedRequest | null, resolution: ResolutionResult | null): boolean {
+  if (!request || !resolution) return false;
+  if (resolution.status !== "answered" && resolution.status !== "partially_answered") return false;
+  if (request.questionType !== "business_discovery" && request.questionType !== "provider_recommendation") return false;
+  return resolution.evidence.some((item) => item.source === "trusthub" && item.sourceRecordId.trim().length > 0);
+}
+
+function consentFromText(text: string): boolean | undefined {
+  const normalized = text.trim().toLowerCase();
+  if (/^(yes|yeah|yep|ok|okay|please do|go ahead|sure)\b/.test(normalized)) return true;
+  if (/^(no|nope|don't|do not|not now|rather not)\b/.test(normalized)) return false;
+  return undefined;
+}
+
+export class ConversationCoordinator {
+  private readonly repository: RuntimeConversationRepository;
+  private readonly resolver: AnswerResolver;
+  private readonly now: () => string;
+  private readonly answerGenerator: AnswerGenerator;
+  private readonly library: WisdomLibrary | null;
+  private readonly cityValidator?: CityValidator;
+  private readonly provisioner?: IdentityProvisioner;
+
+  constructor(repository: RuntimeConversationRepository, resolver: AnswerResolver, now: () => string = () => new Date().toISOString(), answerGenerator: AnswerGenerator = createAnswerGenerator(), library: WisdomLibrary | null = loadWisdomLibrary(), cityValidator?: CityValidator, provisioner?: IdentityProvisioner) {
+    this.cityValidator = cityValidator;
+    this.library = library;
+    this.repository = repository;
+    this.resolver = resolver;
+    this.now = now;
+    this.answerGenerator = answerGenerator;
+    this.provisioner = provisioner;
+  }
+
+  async handleTurn(turn: IncomingTurn): Promise<TurnResult> {
+    const duplicate = turn.providerMessageId ? await this.repository.getByProviderMessageId?.(turn.providerMessageId) : null;
+    if (duplicate) {
+      const reply = [...duplicate.messages].reverse().find((message) => message.direction === "outbound")?.text ?? "This message was already processed.";
+      const duplicateMessage = duplicate.messages.find((message) => message.providerMessageId === turn.providerMessageId);
+      const grantedAt = duplicateMessage?.metadata?.communityConsentAt;
+      const storedConfirmation = duplicateMessage?.metadata?.outcomeConfirmation;
+      return { conversationId: duplicate.id, state: duplicate.state, action: duplicate.lastAction ?? "answer", reply, resolution: duplicate.lastResolution, conversation: duplicate, communityConsentGranted: typeof grantedAt === "string", communityConsentAt: typeof grantedAt === "string" ? grantedAt : null, outcomeConfirmation: storedConfirmation && typeof storedConfirmation === "object" ? storedConfirmation as OutcomeConfirmation : null };
+    }
+    const at = this.now();
+    const conversation = await this.repository.get(turn.conversationId) ?? {
+      id: turn.conversationId, state: "ready_for_request", pendingPermission: null, lastRequest: null, lastResolution: null, lastAction: null,
+      messages: [], transitions: [], updatedAt: at,
+    } satisfies RuntimeConversation;
+    if (!isAssistantName(conversation.assistantName)) conversation.assistantName = assignAssistantName(turn.conversationId);
+    const priorState = conversation.state;
+    const userMetadata = {
+      ...(turn.media?.length ? { whatsappMedia: turn.media } : {}),
+      ...(turn.contributionCandidate ? { detectedContribution: turn.contributionCandidate } : {}),
+      ...(turn.understanding ? { understanding: turn.understanding } : {}),
+    };
+    const userMessage: ConversationMessage = { id: `${turn.conversationId}:in:${conversation.messages.length}`, conversationId: turn.conversationId, channel: turn.channel ?? "web", direction: "inbound", sender: "user", text: turn.text, createdAt: at, ...(turn.providerMessageId ? { providerMessageId: turn.providerMessageId } : {}), ...(Object.keys(userMetadata).length ? { metadata: userMetadata } : {}) };
+    conversation.messages.push(userMessage);
+
+    let action: CoordinatorAction;
+    let reply: string;
+    let resolution: ResolutionResult | null = null;
+    let nextState: RuntimeState;
+    let communityConsentGranted = false;
+    let communityConsentAt: string | null = null;
+    let outcomeConfirmation: OutcomeConfirmation | null = null;
+    const consent = consentFromText(turn.text);
+    const redirect = priorState !== "clarification_needed" && !!conversation.lastRequest?.category && LOCATION_REDIRECT.test(turn.text.trim());
+    const continued = !turn.request && !turn.contributionCandidate && !turn.media?.length && conversation.lastRequest && (priorState === "clarification_needed" || redirect)
+      ? await this.continueClarification(conversation.lastRequest, turn.text, redirect)
+      : null;
+    const pendingQuestion = conversation.lastRequest?.category ? CITY_QUESTION : CATEGORY_QUESTION;
+    const started = !turn.request && !continued && !turn.contributionCandidate && !turn.media?.length && priorState !== "clarification_needed" && consent === undefined && this.cityValidator
+      ? await locationOnlyRequest(turn.text, this.cityValidator)
+      : null;
+    let task = conversation.activeTask ?? { seq: 1, completed: false };
+    if ((turn.request || started) && task.completed) task = { seq: task.seq + 1, completed: false };
+    const preference = !turn.request && !turn.media?.length ? parseNotificationPreference(turn.text) : null;
+    if (preference) {
+      action = "clarify";
+      reply = preferenceReply(preference);
+      nextState = priorState;
+    } else if (conversation.pendingPermission === "community" && (turn.communityConsent !== undefined || consent !== undefined)) {
+      const granted = turn.communityConsent ?? consent ?? false;
+      if (granted && conversation.lastRequest) {
+        communityConsentGranted = true;
+        communityConsentAt = at;
+        userMessage.metadata = { ...userMessage.metadata, communityConsentAt: at };
+      }
+      conversation.pendingPermission = null;
+      action = granted ? "community_request_consented" : "community_request_declined";
+      if (granted && conversation.lastRequest) {
+        resolution = await this.resolve(conversation.lastRequest, { requesterConsentedToCommunity: true, communityAvailable: true });
+        ({ reply, nextState, action } = await this.mapResolution(resolution));
+        if (nextState === "asking_community") nextState = "waiting_for_community";
+      } else if (conversation.lastRequest) {
+        resolution = await this.resolve(conversation.lastRequest, { requesterConsentedToCommunity: false });
+        ({ reply, nextState, action } = await this.mapResolution(resolution));
+      } else { reply = "Understood. I won't ask your community."; nextState = "ready_for_request"; }
+    } else if (conversation.pendingPermission === "human" && (turn.humanConsent !== undefined || consent !== undefined)) {
+      const granted = turn.humanConsent ?? consent ?? false;
+      conversation.pendingPermission = null;
+      action = granted ? "human_handoff_consented" : "human_handoff_declined";
+      if (granted) { reply = "I have recorded your consent for a Trust Agent handoff. No agent connection has been made by this local runtime."; nextState = "human_handoff"; }
+      else { reply = "Understood. I won't pass this to a Trust Agent. I still haven't found enough reliable information to confirm an answer."; nextState = "unresolved"; }
+    } else if (consent !== undefined && !turn.request && !turn.contributionCandidate && conversation.lastRequest
+      && (priorState === "answer_found" || priorState === "answer_uncertain")) {
+      // The explicit yes/no contract that already carries permission turns also carries the
+      // "did that help?" confirmation. Nothing else in the runtime may record an outcome.
+      const confirmedRequest = conversation.lastRequest;
+      outcomeConfirmation = {
+        helpful: consent,
+        confirmedAt: at,
+        matchConfirmed: consent && matchConfirmedByConfirmation(confirmedRequest, conversation.lastResolution),
+      };
+      userMessage.metadata = { ...userMessage.metadata, outcomeConfirmation };
+      conversation.pendingPermission = null;
+      action = consent ? "answer" : "final_unresolved";
+      nextState = consent ? "resolved" : "unresolved";
+      reply = consent
+        ? "Thanks. I've recorded that this answered your question."
+        : "Understood. I've recorded that this did not answer your question. You can refine the request or try another route.";
+    } else if (turn.contributionCandidate) {
+      action = "contribution_recorded";
+      reply = "Thanks. I saved this as an unverified community contribution for review. It is not yet a verified listing.";
+      nextState = "ready_for_request";
+    } else if (!turn.request && !turn.media?.length && isGreeting(turn.text) && this.library?.greeting(turn.conversationId, conversation.assistantName)) {
+      action = "clarify";
+      reply = this.library.greeting(turn.conversationId, conversation.assistantName)!.reply;
+      if (priorState === "clarification_needed") reply = `${reply}\n\n${pendingQuestion}`;
+      nextState = priorState === "clarification_needed" ? priorState : "ready_for_request";
+    } else if (continued) {
+      conversation.lastRequest = continued;
+      conversation.pendingPermission = null;
+      resolution = await this.resolve(continued, { ...turn.resolverContext, clarificationAsked: false });
+      ({ reply, nextState, action } = await this.mapResolution(resolution));
+    } else if (started) {
+      conversation.lastRequest = started;
+      resolution = await this.resolve(started, { ...turn.resolverContext, clarificationAsked: false });
+      ({ reply, nextState, action } = await this.mapResolution(resolution));
+    } else if (!turn.request && !turn.contributionCandidate && !turn.media?.length
+      && turn.profileLinked !== true && parseProfileCreationRequest(turn.text)) {
+      // An explicit request to start the profile flow. It is never answered by
+      // asking "What are you trying to find or sort out?" — the existing
+      // IdentityProvisioner seam creates the profile, and it is currently not
+      // connected, which throws instead of silently doing nothing.
+      const profileRequest = parseProfileCreationRequest(turn.text)!;
+      const displayName = profileRequest.displayName ?? (turn.understanding?.request?.text ? null : null);
+      const next = await this.startProfileCreation(turn, displayName);
+      reply = next.reply;
+      action = next.action;
+      nextState = next.state;
+    } else if (!turn.request && !turn.media?.length && priorState === "clarification_needed" && conversation.lastRequest) {
+      action = "clarify";
+      reply = pendingQuestion;
+      nextState = "clarification_needed";
+    } else if (!turn.request) {
+      action = "clarify";
+      reply = turn.media?.length
+        ? `I received your ${turn.media.map((item) => item.kind === "voice" ? "voice note" : item.kind).join(" and ")}, but media transcription or image reading is not configured yet. Please describe what you need in a text message.`
+        : "What are you trying to find or sort out?";
+      nextState = turn.media?.length ? "clarification_needed" : "ready_for_request";
+    } else {
+      // A fresh request made while a clarification is pending keeps the city already given.
+      const carried = priorState === "clarification_needed" ? conversation.lastRequest?.location : null;
+      const request: NormalizedRequest = carried?.city && !turn.request.location?.city
+        ? { ...turn.request, location: { ...turn.request.location, country: turn.request.location?.country ?? carried.country ?? null, city: carried.city, area: turn.request.location?.area ?? carried.area ?? null } }
+        : turn.request;
+      // An unrelated topic change clears the previous request so a later "yes"
+      // cannot be mistaken for a consent or confirmation of a search the user
+      // has already moved on from. Only the clarification path above keeps it.
+      conversation.lastRequest = null;
+      conversation.lastResolution = null;
+      conversation.lastAction = null;
+      conversation.pendingPermission = null;
+      conversation.lastRequest = request;
+      action = "answer";
+      resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: priorState === "clarification_needed" });
+      ({ reply, nextState, action } = await this.mapResolution(resolution));
+    }
+
+    // Community requests are stored against a TrustHub profile, so a guest is never offered one they could not complete.
+    if (action === "ask_community_permission" && resolution && turn.profileLinked === false) {
+      if (resolution.evidence.length) {
+        resolution = { ...resolution, status: "partially_answered", uncertainty: "I don't have community recommendations to add yet." };
+        ({ reply, nextState, action } = await this.mapResolution(resolution));
+      } else {
+        resolution = { ...resolution, status: "unresolved" };
+        action = "final_unresolved";
+        nextState = "unresolved";
+        reply = "I haven't found enough reliable information to confirm that.";
+      }
+    }
+
+    let completedTask: { taskId: string } | undefined;
+    if (!task.completed && resolution && (resolution.status === "answered" || resolution.status === "partially_answered") && resolution.evidence.length > 0) {
+      task = { ...task, completed: true };
+      completedTask = { taskId: `${turn.conversationId}:${task.seq}` };
+    }
+    conversation.activeTask = task;
+    const searched = conversation.lastRequest;
+    const discovery = searched?.category && searched.location?.city && (searched.questionType === "business_discovery" || searched.questionType === "provider_recommendation");
+    if (discovery && resolution?.status === "community_needed" && resolution.evidence.length === 0) {
+      reply = `I couldn't find any ${searched.category} listed in ${searched.location!.city} in TrustHub's records yet. Would you like me to ask people in the ${searched.location!.city} community? I'd only share your question, never your number. Reply yes to go ahead, or no and I'll leave it there.`;
+    }
+    if (resolution && (resolution.status === "answered" || resolution.status === "partially_answered") && action === "answer" && resolution.evidence.length) {
+      const opening = acknowledgement(searched, resolution);
+      reply = `${opening ? `${opening}\n\n` : ""}${reply}\n\n${OUTCOME_FOLLOW_UP}`;
+    }
+    if (resolution?.status === "unresolved" && searched?.category && searched.location?.city && (searched.questionType === "business_discovery" || searched.questionType === "provider_recommendation")) {
+      reply = `I couldn't find any ${searched.category} listed in ${searched.location.city} in TrustHub's records yet. Would you like me to try a nearby city, or search for a different kind of service?`;
+    }
+    if (action === "ask_community_permission") conversation.pendingPermission = "community";
+    if (action === "request_human_permission") conversation.pendingPermission = "human";
+
+    conversation.state = nextState;
+    conversation.lastResolution = resolution;
+    conversation.lastAction = action;
+    conversation.updatedAt = at;
+    if (conversation.state !== priorState) conversation.transitions.push({ from: priorState, to: conversation.state, at, reason: action });
+    conversation.messages.push({ id: `${turn.conversationId}:out:${conversation.messages.length}`, conversationId: turn.conversationId, channel: turn.channel ?? "web", direction: "outbound", sender: "system", text: reply, createdAt: at });
+    await this.repository.save(conversation);
+    return { conversationId: turn.conversationId, state: conversation.state, action, reply, resolution, conversation, communityConsentGranted, communityConsentAt, outcomeConfirmation, ...(completedTask ? { completedTask } : {}), ...(preference ? { notificationPreference: preference } : {}) };
+  }
+
+  private resolve(request: NormalizedRequest, context: ResolverContext) { return this.resolver.resolve(request, context); }
+
+  private async continueClarification(pending: NormalizedRequest, text: string, allowCityChange = false): Promise<NormalizedRequest | null> {
+    const next = continueClarifiedRequest(pending, text, allowCityChange);
+    const city = next?.location?.city;
+    if (!city || city.toLocaleLowerCase() === pending.location?.city?.toLocaleLowerCase() || !this.cityValidator) return next;
+    return await this.cityValidator(city, next.location?.country ?? null) ? next : null;
+  }
+
+  private async mapResolution(resolution: ResolutionResult): Promise<{ action: CoordinatorAction; reply: string; nextState: RuntimeState }> {
+    const { text: reply } = await this.answerGenerator.generate(resolution);
+    switch (resolution.status) {
+      case "answered": return { action: "answer", reply, nextState: "answer_found" };
+      case "partially_answered": return { action: "answer", reply, nextState: "answer_uncertain" };
+      case "clarification_needed": return { action: "clarify", reply, nextState: "clarification_needed" };
+      case "community_needed": return { action: "ask_community_permission", reply, nextState: "asking_community" };
+      case "human_needed": return { action: "request_human_permission", reply, nextState: "trust_agent_offer" };
+      case "unresolved": return { action: "final_unresolved", reply, nextState: "unresolved" };
+    }
+  }
+
+  /**
+   * Starts the profile flow through the existing IdentityProvisioner seam.
+   * The seam is currently not connected, so this throws
+   * `IdentityProvisionerNotConnectedError` rather than silently doing nothing
+   * or creating a parallel profile. A profile is never created from an
+   * unlinked phone number.
+   */
+  private async startProfileCreation(turn: IncomingTurn, displayName: string | null): Promise<{ action: CoordinatorAction; reply: string; state: RuntimeState }> {
+    if (!this.provisioner) {
+      throw new Error("Profile creation is not available: the IdentityProvisioner seam is not connected.");
+    }
+    const profile = await this.provisioner.provisionProfile({
+      phoneNumber: turn.senderPhoneNumber ?? "",
+      displayName,
+      communityKey: null,
+    });
+    return {
+      action: "profile_created",
+      reply: `You're all set! Your TrustHub profile is ready${profile.name ? `, ${profile.name}` : ""}. What would you like to do today?`,
+      state: "profile_created",
+    };
+  }
+}
+
+

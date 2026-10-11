@@ -1,0 +1,34 @@
+.page { max-width: 1240px; margin: 0 auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1.5rem; color: #0f172a; }
+.topbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; justify-content: space-between; }
+.title h1 { font-size: 1.5rem; margin: 0; }
+.title p { margin: 0.15rem 0 0; font-size: 0.85rem; color: #475569; }
+.controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.segment { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; }
+.segment button { background: #fff; border: 0; padding: 0.45rem 0.8rem; font-size: 0.85rem; cursor: pointer; }
+.segment button[aria-pressed="true"] { background: #0f172a; color: #fff; }
+.button { background: #0f172a; color: #fff; border: 0; border-radius: 8px; padding: 0.5rem 0.9rem; font-size: 0.85rem; cursor: pointer; }
+.button.secondary { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+.status { font-size: 0.8rem; color: #475569; }
+.status.stale { color: #b45309; }
+.panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; }
+.gate { max-width: 560px; margin: 3rem auto; display: flex; flex-direction: column; gap: 0.75rem; }
+.gate textarea { width: 100%; min-height: 5.5rem; font-family: ui-monospace, monospace; font-size: 0.8rem; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.9rem; }
+.notice { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+.section { display: flex; flex-direction: column; gap: 0.6rem; }
+.section h2 { font-size: 1.05rem; margin: 0; }
+.section .sub { font-size: 0.8rem; color: #64748b; margin: 0; }
+.grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 0.85rem 1rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.card .label { font-size: 0.78rem; color: #475569; }
+.card .value { font-size: 1.6rem; font-weight: 650; letter-spacing: -0.02em; }
+.card .hint { font-size: 0.72rem; color: #64748b; }
+.two { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.88rem; }
+.list li { display: flex; justify-content: space-between; gap: 0.75rem; border-bottom: 1px solid #f1f5f9; padding-bottom: 0.3rem; }
+.list li span:last-child { font-variant-numeric: tabular-nums; color: #334155; }
+.empty { color: #64748b; font-size: 0.85rem; margin: 0; }
+.skeleton { height: 5rem; border-radius: 12px; background: linear-gradient(90deg, #f1f5f9, #e2e8f0, #f1f5f9); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.defs { font-size: 0.78rem; color: #475569; display: grid; gap: 0.35rem; }
+@media (max-width: 560px) { .page { padding: 0.75rem; } .card .value { font-size: 1.35rem; } }

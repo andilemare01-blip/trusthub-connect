@@ -211,11 +211,29 @@ export class ConversationCoordinator {
       // IdentityProvisioner seam creates the profile, and it is currently not
       // connected, which throws instead of silently doing nothing.
       const profileRequest = parseProfileCreationRequest(turn.text)!;
-      const displayName = profileRequest.displayName ?? (turn.understanding?.request?.text ? null : null);
+      const displayName = profileRequest.displayName ?? (turn.understanding?.request?.text ? turn.understanding.request.text : null);
       const next = await this.startProfileCreation(turn, displayName);
       reply = next.reply;
       action = next.action;
       nextState = next.state;
+    } else if (turn.request && (turn.request.intent === "add_business" || turn.request.questionType === "add_business")) {
+      // Handle "add a business" requests - guide user through business submission
+      const { reply: addReply, state: addState, action: addAction } = await this.handleAddBusiness(turn, conversation);
+      reply = addReply;
+      action = addAction;
+      nextState = addState;
+    } else if (turn.request && (turn.request.intent === "review_experience" || turn.request.questionType === "review_write")) {
+      // Handle "write a review" requests - guide user through review submission
+      const { reply: reviewReply, state: reviewState, action: reviewAction } = await this.handleWriteReview(turn, conversation);
+      reply = reviewReply;
+      action = reviewAction;
+      nextState = reviewState;
+    } else if (turn.request && turn.request.intent === "get_reviews") {
+      // Handle "read reviews" requests - search for reviews on a business
+      const { reply: reviewsReply, state: reviewsState, action: reviewsAction } = await this.handleGetReviews(turn, conversation);
+      reply = reviewsReply;
+      action = reviewsAction;
+      nextState = reviewsState;
     } else if (!turn.request && !turn.media?.length && priorState === "clarification_needed" && conversation.lastRequest) {
       action = "clarify";
       reply = pendingQuestion;
@@ -331,6 +349,96 @@ export class ConversationCoordinator {
       reply: `You're all set! Your TrustHub profile is ready${profile.name ? `, ${profile.name}` : ""}. What would you like to do today?`,
       state: "profile_created",
     };
+  }
+
+  /** Handles "add a business" requests by guiding the user through the submission flow. */
+  private async handleAddBusiness(turn: IncomingTurn, conversation: RuntimeConversation): Promise<{ action: CoordinatorAction; reply: string; state: RuntimeState }> {
+    const request = turn.request!;
+    const category = request.category;
+    const location = request.location;
+
+    // If we have a category and location, we can accept the submission
+    if (category && location?.city) {
+      // Store the pending business submission in conversation state for follow-up
+      conversation.lastRequest = request;
+      return {
+        action: "clarify",
+        reply: `Great! I'll help you add "${category}" in ${location.city}${location.area ? `, ${location.area}` : ""}. What's the business name?`,
+        state: "clarification_needed",
+      };
+    }
+
+    // Need category
+    if (!category) {
+      return {
+        action: "clarify",
+        reply: "What type of business would you like to add? (e.g., bakery, plumber, hair salon)",
+        state: "clarification_needed",
+      };
+    }
+
+    // Need location
+    if (!location?.city) {
+      return {
+        action: "clarify",
+        reply: `What city is this "${category}" in?`,
+        state: "clarification_needed",
+      };
+    }
+
+    return {
+      action: "clarify",
+      reply: "I need a bit more information to add this business. What's the business name and which city is it in?",
+      state: "clarification_needed",
+    };
+  }
+
+  /** Handles "write a review" requests by guiding the user through the review flow. */
+  private async handleWriteReview(turn: IncomingTurn, conversation: RuntimeConversation): Promise<{ action: CoordinatorAction; reply: string; state: RuntimeState }> {
+    const request = turn.request!;
+    const category = request.category;
+    const location = request.location;
+
+    if (category && location?.city) {
+      conversation.lastRequest = request;
+      return {
+        action: "clarify",
+        reply: `I'd be happy to help you share your experience with "${category}" in ${location.city}${location.area ? `, ${location.area}` : ""}. Which business did you use?`,
+        state: "clarification_needed",
+      };
+    }
+
+    if (!category) {
+      return {
+        action: "clarify",
+        reply: "What type of business or service would you like to review?",
+        state: "clarification_needed",
+      };
+    }
+
+    if (!location?.city) {
+      return {
+        action: "clarify",
+        reply: `Which city is the "${category}" you want to review located in?`,
+        state: "clarification_needed",
+      };
+    }
+
+    return {
+      action: "clarify",
+      reply: "Which business would you like to review, and in which city is it located?",
+      state: "clarification_needed",
+    };
+  }
+
+  /** Handles "read reviews" requests by searching for reviews on a business. */
+  private async handleGetReviews(turn: IncomingTurn, conversation: RuntimeConversation): Promise<{ action: CoordinatorAction; reply: string; state: RuntimeState }> {
+    const request = turn.request!;
+    // This goes through the normal resolver which handles "reputation" questionType
+    conversation.lastRequest = request;
+    const resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: false });
+    const { action, reply, nextState } = await this.mapResolution(resolution);
+    return { action, reply, state: nextState };
   }
 }
 

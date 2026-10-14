@@ -19,7 +19,7 @@ export const SERVICE_REQUEST_STATUSES = [
 export type ServiceRequestStatus = (typeof SERVICE_REQUEST_STATUSES)[number];
 
 /** What the requester is trying to accomplish, classified by AI but never auto-verified as fulfilled. */
-export type RequestIntent = "find_business" | "find_provider" | "ask_question" | "report_issue";
+export type RequestIntent = "find_business" | "find_provider" | "ask_question" | "report_issue" | "add_business" | "review_experience" | "get_reviews" | "profile_creation";
 
 /**
  * The eventual, explicit outcome of a request. "Problem solved" must never

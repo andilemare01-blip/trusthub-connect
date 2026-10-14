@@ -2,6 +2,7 @@ import type { NormalizedRequest } from "../answer-resolution/types.ts";
 import type { DetectedContribution } from "../contributions/detection.ts";
 import { detectContribution } from "../contributions/detection.ts";
 import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
+import { recognizeNonSearchIntent } from "../conversation-coordinator/intents.ts";
 import { AiGateway } from "./gateway.ts";
 import { readAiConfig } from "./config.ts";
 import { RuntimeEventAiSpendLedger } from "./spend-ledger.ts";
@@ -31,27 +32,35 @@ export interface ConversationUnderstandingProvider {
 
 function build(text: string, request: NormalizedRequest | null): StructuredUnderstanding {
   const contribution = detectContribution(text);
+  const nonSearch = request === null ? recognizeNonSearchIntent(text) : null;
   const normalized = text.trim().toLocaleLowerCase();
   const emergency = /\b(emergency|danger|life[- ]?threatening|need an ambulance)\b/.test(normalized);
   const human = /\b(speak to|talk to|need|request) (?:a )?(?:human|person|trust agent|agent)\b/.test(normalized);
   const urgency = emergency ? "emergency" : /\b(urgent(?:ly)?|asap|immediately|today)\b/.test(normalized) ? "urgent" : "normal";
   const escalation = human || emergency ? "human" : /\b(ask|contact|tell) (?:my )?(?:community|neighbors|neighbours)\b/.test(normalized) ? "community" : "none";
+  const effectiveRequest = (request ?? nonSearch?.request ?? null);
   const answerability = contribution ? "contribution_candidate"
     : human || emergency ? "needs_human"
-    : request && request.questionType === "profile_creation" ? "profile_creation"
-    : request && !request.category ? "needs_category"
-    : request && !request.location?.city ? "needs_location"
-    : request ? "ready_to_search"
+    : effectiveRequest && effectiveRequest.questionType === "profile_creation" ? "profile_creation"
+    : effectiveRequest && effectiveRequest.intent === "add_business" ? "contribution_candidate"
+    : effectiveRequest && effectiveRequest.intent === "review_experience" ? "contribution_candidate"
+    : effectiveRequest && effectiveRequest.questionType === "reputation" && effectiveRequest.intent !== "get_reviews" ? "contribution_candidate"
+    : effectiveRequest && !effectiveRequest.category && (effectiveRequest.questionType === "business_discovery" || effectiveRequest.questionType === "provider_recommendation") ? "needs_category"
+    : effectiveRequest && !effectiveRequest.location?.city && (effectiveRequest.questionType === "business_discovery" || effectiveRequest.questionType === "provider_recommendation") ? "needs_location"
+    : effectiveRequest ? "ready_to_search"
     : "unknown";
   const clarificationQuestion = answerability === "needs_location" ? "Which city should I look in? An area is optional."
     : answerability === "needs_category" ? request?.ambiguity?.question ?? "What type of business or service are you looking for?"
     : null;
-  return { source: "deterministic", aiProviderStatus: "unavailable", request, contribution, urgency, answerability, clarificationQuestion, escalation };
+  return { source: "deterministic", aiProviderStatus: "unavailable", request: effectiveRequest, contribution, urgency, answerability, clarificationQuestion, escalation };
 }
 
 export class DeterministicUnderstandingProvider implements ConversationUnderstandingProvider {
   async understand(text: string): Promise<StructuredUnderstanding> {
-    return build(text, parseLocalSearchRequest(text) ?? null);
+    const searchRequest = parseLocalSearchRequest(text);
+    if (searchRequest) return build(text, searchRequest);
+    const recognized = recognizeNonSearchIntent(text);
+    return build(text, recognized?.request ?? null);
   }
 }
 

@@ -4,8 +4,8 @@ import type { WhatsAppMediaMetadata } from "../whatsapp/provider";
 import type { DetectedContribution } from "../contributions/detection";
 import type { StructuredUnderstanding } from "../ai/understanding";
 
-export type RuntimeState = "ready_for_request" | "understanding_request" | "clarification_needed" | "searching_trusthub" | "answer_found" | "answer_uncertain" | "asking_community" | "waiting_for_community" | "trust_agent_offer" | "human_handoff" | "waiting_for_agent" | "profile_creation" | "profile_created" | "resolved" | "abandoned" | "unresolved";
-export type CoordinatorAction = "answer" | "clarify" | "contribution_recorded" | "ask_community_permission" | "community_request_consented" | "community_request_declined" | "request_human_permission" | "human_handoff_consented" | "human_handoff_declined" | "final_unresolved" | "profile_creation" | "profile_created";
+export type RuntimeState = "ready_for_request" | "understanding_request" | "clarification_needed" | "searching_trusthub" | "answer_found" | "answer_uncertain" | "asking_community" | "waiting_for_community" | "trust_agent_offer" | "human_handoff" | "waiting_for_agent" | "profile_creation" | "profile_created" | "business_submission" | "review_writing" | "resolved" | "abandoned" | "unresolved";
+export type CoordinatorAction = "answer" | "clarify" | "contribution_recorded" | "ask_community_permission" | "community_request_consented" | "community_request_declined" | "request_human_permission" | "human_handoff_consented" | "human_handoff_declined" | "final_unresolved" | "profile_creation" | "profile_created" | "business_submission" | "review_writing";
 
 export interface RuntimeConversation {
   id: string;

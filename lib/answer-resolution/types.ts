@@ -11,7 +11,7 @@ export interface NormalizedRequest {
   intent: RequestIntent | null;
   category: string | null;
   location: { country?: string | null; city?: string | null; area?: string | null } | null;
-  questionType: "business_discovery" | "provider_recommendation" | "business_fact" | "reputation" | "community_question" | "trusthub_policy" | "general" | "unknown" | "profile_creation";
+  questionType: "business_discovery" | "provider_recommendation" | "business_fact" | "reputation" | "review_read" | "review_write" | "community_question" | "trusthub_policy" | "general" | "unknown" | "profile_creation" | "add_business";
   requestedAttribute?: string | null;
   /** Specific business/person name when the request identifies an entity. */
   entityName?: string | null;

@@ -26,7 +26,7 @@ export const FREE_MODEL_OUTPUT_USD_PER_MILLION = 0;
 /** Default OpenRouter chat-completions endpoint. Overridable with AI_PROVIDER_BASE_URL. */
 export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
-/** A currently available free OpenRouter model used when AI_MODEL is not set. Free models rotate; this is a fallback, not a guarantee. */
+/** A currently available free OpenRouter model used when AI_PROVIDER_MODEL is not set. Free models rotate; this is a fallback, not a guarantee. */
 export const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
 
 function positive(value: string | undefined): number | null {
@@ -41,22 +41,25 @@ function nonNegative(value: string | undefined): number | null {
 }
 
 /**
- * Env names: OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_INPUT_USD_PER_MILLION_TOKENS,
- * OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS; optional OPENROUTER_BASE_URL, AI_SPEND_LIMIT_USD,
- * AI_MAX_INPUT_TOKENS, AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, OPENROUTER_HTTP_REFERER, OPENROUTER_APP_TITLE.
+ * Env names (new): AI_PROVIDER_API_KEY, AI_PROVIDER_MODEL, AI_PROVIDER_INPUT_USD_PER_MILLION_TOKENS,
+ * AI_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS; optional AI_PROVIDER_BASE_URL, AI_SPEND_LIMIT_USD,
+ * AI_MAX_INPUT_TOKENS, AI_MAX_OUTPUT_TOKENS, AI_TIMEOUT_MS, AI_PROVIDER_HTTP_REFERER, AI_PROVIDER_APP_TITLE.
+ * 
+ * Backward compat (deprecated): OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_INPUT_USD_PER_MILLION_TOKENS,
+ * OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS, OPENROUTER_BASE_URL, OPENROUTER_HTTP_REFERER, OPENROUTER_APP_TITLE.
  *
  * The API key is read only on the server and never sent to the browser, logs, source control
  * or model prompts. Free `:free` models are used by default; this code never selects or
  * switches to a paid model and never purchases credits.
  */
 export function readAiConfig(env: Record<string, string | undefined> = process.env): AiConfigStatus {
-  const apiKey = env.OPENROUTER_API_KEY?.trim();
+  const apiKey = (env.AI_PROVIDER_API_KEY ?? env.OPENROUTER_API_KEY)?.trim();
   if (!apiKey) return { enabled: false, reason: "missing_api_key" };
-  const model = (env.OPENROUTER_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL);
-  const inputUsdPerMillion = nonNegative(env.OPENROUTER_INPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_INPUT_USD_PER_MILLION));
-  const outputUsdPerMillion = nonNegative(env.OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_OUTPUT_USD_PER_MILLION));
+  const model = ((env.AI_PROVIDER_MODEL?.trim() ?? env.OPENROUTER_MODEL?.trim()) || DEFAULT_OPENROUTER_MODEL);
+  const inputUsdPerMillion = nonNegative(env.AI_PROVIDER_INPUT_USD_PER_MILLION_TOKENS ?? env.OPENROUTER_INPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_INPUT_USD_PER_MILLION));
+  const outputUsdPerMillion = nonNegative(env.AI_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS ?? env.OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_OUTPUT_USD_PER_MILLION));
   if (inputUsdPerMillion === null || outputUsdPerMillion === null) return { enabled: false, reason: "unknown_pricing" };
-  const baseUrl = (env.OPENROUTER_BASE_URL?.trim() || DEFAULT_OPENROUTER_BASE_URL).replace(/\/+$/, "");
+  const baseUrl = ((env.AI_PROVIDER_BASE_URL?.trim() ?? env.OPENROUTER_BASE_URL?.trim()) || DEFAULT_OPENROUTER_BASE_URL).replace(/\/+$/, "");
   if (!/^https:\/\//.test(baseUrl)) return { enabled: false, reason: "insecure_base_url" };
   const limitUsd = positive(env.AI_SPEND_LIMIT_USD) ?? DEFAULT_AI_SPEND_LIMIT_USD;
   return {
@@ -67,8 +70,8 @@ export function readAiConfig(env: Record<string, string | undefined> = process.e
       maxInputTokens: Math.min(positive(env.AI_MAX_INPUT_TOKENS) ?? 1200, 8000),
       maxOutputTokens: Math.min(positive(env.AI_MAX_OUTPUT_TOKENS) ?? 300, 1500),
       timeoutMs: Math.min(positive(env.AI_TIMEOUT_MS) ?? 8000, 20000),
-      httpReferer: env.OPENROUTER_HTTP_REFERER?.trim() || undefined,
-      appTitle: env.OPENROUTER_APP_TITLE?.trim() || undefined,
+      httpReferer: (env.AI_PROVIDER_HTTP_REFERER?.trim() ?? env.OPENROUTER_HTTP_REFERER?.trim()) || undefined,
+      appTitle: (env.AI_PROVIDER_APP_TITLE?.trim() ?? env.OPENROUTER_APP_TITLE?.trim()) || undefined,
     },
   };
 }

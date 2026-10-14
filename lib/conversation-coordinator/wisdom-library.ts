@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-/** Display identities for the one Wisdom engine; they change only the name, never behaviour. */
-export const ASSISTANT_NAMES = ["Wisdom", "Tanaka", "Matthew", "Lizzie", "Daniel", "Sarah", "James", "Emily", "Michael", "Grace"] as const;
+/** The single canonical identity for the Wisdom engine. */
+export const ASSISTANT_NAMES = ["Wisdom"] as const;
 export const DEFAULT_ASSISTANT_NAME = "Wisdom";
-/** The source library's own self-reference; it is the only token rewritten for other identities. */
+/** The source library's own self-reference. */
 const LIBRARY_SELF_NAME = "Wisdom";
 
 export interface WisdomLibraryEntry {
@@ -17,24 +17,18 @@ export interface WisdomLibraryEntry {
 
 const LIBRARY_PATH = path.join("docs", "TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md");
 
-function hash(value: string): number {
-  let result = 2166136261;
-  for (let index = 0; index < value.length; index += 1) result = Math.imul(result ^ value.charCodeAt(index), 16777619) >>> 0;
-  return result;
-}
-
-/** Deterministic so a given conversation can never be re-assigned a different name. */
-export function assignAssistantName(conversationId: string): string {
-  return ASSISTANT_NAMES[hash(`assistant-name:${conversationId}`) % ASSISTANT_NAMES.length];
+/** Always returns the canonical Wisdom name. */
+export function assignAssistantName(_conversationId: string): string {
+  return DEFAULT_ASSISTANT_NAME;
 }
 
 export function isAssistantName(value: unknown): value is string {
-  return typeof value === "string" && (ASSISTANT_NAMES as readonly string[]).includes(value);
+  return typeof value === "string" && value === DEFAULT_ASSISTANT_NAME;
 }
 
-/** Rewrites the library's hardcoded self-reference to the conversation's assigned name. */
-export function applyAssistantName(text: string, name: string): string {
-  return name === LIBRARY_SELF_NAME ? text : text.replace(/\bWisdom\b/g, name);
+/** No rewriting needed since we always use the canonical name. */
+export function applyAssistantName(text: string, _name: string): string {
+  return text;
 }
 
 export function parseWisdomLibrary(markdown: string): WisdomLibraryEntry[] {
@@ -64,13 +58,13 @@ export class WisdomLibrary {
 
   byCategory(category: string): WisdomLibraryEntry[] { return this.entries.filter((entry) => entry.category === category); }
 
-  /** Picks one `new_hi` entry per conversation and applies the assigned name to it. */
-  greeting(conversationId: string, assistantName: string): { entryId: string; reply: string } | null {
+  /** Picks one `new_hi` entry per conversation. */
+  greeting(conversationId: string, _assistantName: string): { entryId: string; reply: string } | null {
     const candidates = this.byCategory("new_hi").filter((entry) => entry.response.includes(LIBRARY_SELF_NAME));
     if (!candidates.length) return null;
-    const entry = candidates[hash(`greeting:${conversationId}`) % candidates.length];
+    const entry = candidates[0]; // Deterministic: always pick the first greeting
     const reply = [entry.response, entry.nextMove].filter(Boolean).join("\n\n");
-    return { entryId: entry.id, reply: applyAssistantName(reply, assistantName) };
+    return { entryId: entry.id, reply };
   }
 }
 
@@ -83,6 +77,5 @@ export function loadWisdomLibrary(): WisdomLibrary | null {
   return cached;
 }
 
-const NAME_PATTERN = ASSISTANT_NAMES.join("|");
-const GREETING = new RegExp(`^(?:hi|hie|hey|hello|hullo|good (?:morning|afternoon|evening))(?: there)?(?: (?:${NAME_PATTERN}))?[\\s!.,]*$`, "i");
+const GREETING = /^(?:hi|hie|hey|hello|hullo|good (?:morning|afternoon|evening))\b/i;
 export function isGreeting(text: string): boolean { return GREETING.test(text.trim()); }

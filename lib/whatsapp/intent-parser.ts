@@ -1,5 +1,6 @@
 import type { NormalizedRequest } from "../answer-resolution/types";
 import { SERVICE_TAXONOMY, isFocusedServiceRequest } from "../discovery/service-taxonomy.ts";
+import { recognizeNonSearchIntent } from "../conversation-coordinator/intents.ts";
 
 /** "How about …", "What about …" and "Any … in …" are ordinary search wording, not questions. */
 const SEARCH_PHRASE = /\b(?:find|need|want|looking for|search for|recommend|where can i find|who sells|looking to buy)\b\s+(.*)$/i;
@@ -76,6 +77,8 @@ function annotate(text: string, category: string, locationPhrase: string | null,
 export function parseLocalSearchRequest(text: string): NormalizedRequest | undefined {
   const trimmed = text.trim();
   if (!trimmed || trimmed.length > MAX_PARSE_CHARS) return undefined;
+
+  if (recognizeNonSearchIntent(trimmed)) return undefined;
 
   // "How about a car rental company?" and "What about car hire?" are ordinary search wording.
   const howAbout = HOW_ABOUT.exec(trimmed);

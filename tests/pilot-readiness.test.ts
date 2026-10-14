@@ -93,7 +93,7 @@ test("3b. a request made while a clarification is pending keeps the city already
   assert.equal(result.state, "answer_found");
 });
 
-test("4. assistant name rotation across conversations never resets one conversation's context", async () => {
+test("4. assistant name is consistently Wisdom across all conversations", async () => {
   const { coordinator } = stack();
   const names = new Set<string | undefined>();
   for (const id of ["11", "12", "13", "14", "15"]) {
@@ -103,7 +103,9 @@ test("4. assistant name rotation across conversations never resets one conversat
     assert.equal(b.conversation.lastRequest?.location?.city, "Harare");
     names.add(b.conversation.assistantName);
   }
-  assert.ok(names.size > 1);
+  // All conversations should use the canonical "Wisdom" name
+  assert.equal(names.size, 1);
+  assert.ok(names.has("Wisdom"));
 });
 
 test("8. a multi-message search completes exactly one task; a new search starts the next one", async () => {

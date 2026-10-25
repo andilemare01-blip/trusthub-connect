@@ -17,6 +17,7 @@ function sourcesFor(request: NormalizedRequest): SourceKind[] {
     case "trusthub_policy": return ["authored", "human_trust_agent"];
     case "add_business": return ["authored"];
     case "review_write": return ["authored"];
+    case "recruitment": return ["community", "human_trust_agent"];
     case "general": return ["ai"];
     default: return ["trusthub", "community", "human_trust_agent"];
   }

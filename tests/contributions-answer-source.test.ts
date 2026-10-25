@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+// @ts-ignore
+import { registerHooks } from "node:module";
+registerHooks({
+  resolve(specifier: string, context: any, nextResolve: (s: string, c: any) => any) {
+    if (specifier === "server-only") {
+      return { url: "data:text/javascript,export {};", shortCircuit: true };
+    }
+    return nextResolve(specifier, context);
+  },
+});
 import { createTrustHubAnswerResolver } from "../lib/answer-resolution/factory.ts";
 import { DeterministicAnswerGenerator } from "../lib/answer-resolution/response-generator.ts";
 import type { NormalizedRequest } from "../lib/answer-resolution/types.ts";
 import type { DiscoveryRecord, KnowledgeRecordReader } from "../lib/discovery/service.ts";
-import type { DeclaredContributionQuery, DeclaredContributionRecord } from "../lib/contributions/repository.ts";
+import type { DeclaredContributionQuery, DeclaredContributionRecord, ContributionRepository } from "../lib/contributions/repository.ts";
 import { SupabaseContributionRepository } from "../lib/contributions/supabase-repository.ts";
 import type { SupabaseDataClient, SupabaseQuery, SupabaseQueryResult, SupabaseRow } from "../lib/supabase/data-client.ts";
 import type { ExistingCommunityReference } from "../types/community.ts";
@@ -311,4 +321,96 @@ test("the persistence read rejects a non-UUID community instead of querying loos
     /contributions.community_id must be a UUID/,
   );
   assert.equal(queries.length, 0);
+});
+
+// --- Factory wiring tests (mocked Supabase) ---
+
+/** A SupabaseDataClient whose `from` factory throws when configuration is missing. */
+function throwingClient(error: Error): SupabaseDataClient {
+  return { from: () => { throw error; } };
+}
+
+test("createContributionRepository wires the production read path to the existing Supabase implementation", async () => {
+  const originalUrl = process.env.SUPABASE_URL;
+  const originalKey = process.env.SUPABASE_SECRET_KEY;
+  const originalServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "https://example.supabase.co";
+  process.env.SUPABASE_SECRET_KEY = "secret-key";
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    const { createContributionRepository } = await import("../lib/contributions/repository.ts");
+    const repository = createContributionRepository();
+    assert.ok(repository instanceof SupabaseContributionRepository, "the factory must return the real Supabase adapter, not a not-connected stub");
+  } finally {
+    if (originalUrl !== undefined) process.env.SUPABASE_URL = originalUrl; else delete process.env.SUPABASE_URL;
+    if (originalKey !== undefined) process.env.SUPABASE_SECRET_KEY = originalKey; else delete process.env.SUPABASE_SECRET_KEY;
+    if (originalServiceRole !== undefined) process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRole; else delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  }
+});
+
+test("createContributionRepository fails loudly when Supabase configuration is missing instead of returning a silent stub", async () => {
+  const originalUrl = process.env.SUPABASE_URL;
+  const originalKey = process.env.SUPABASE_SECRET_KEY;
+  const originalServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  delete process.env.SUPABASE_URL;
+  delete process.env.SUPABASE_SECRET_KEY;
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    const { createContributionRepository } = await import("../lib/contributions/repository.ts");
+    assert.throws(() => createContributionRepository(), /Server persistence is unavailable/);
+  } finally {
+    if (originalUrl !== undefined) process.env.SUPABASE_URL = originalUrl;
+    if (originalKey !== undefined) process.env.SUPABASE_SECRET_KEY = originalKey;
+    if (originalServiceRole !== undefined) process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRole;
+  }
+});
+
+test("a database error during the read fails safely without fabricating community knowledge", async () => {
+  const { client: database } = contributionsClient([]);
+  (database as { from: (table: string) => SupabaseQuery }).from = () => ({
+    select: () => { throw new Error("boom"); },
+  }) as unknown as SupabaseQuery;
+  await assert.rejects(
+    () => new SupabaseContributionRepository(database).findDeclaredByCommunity({ communityId: COMMUNITY_ID }),
+    /boom/,
+  );
+});
+
+test("the community intelligence query can consume the repository results end-to-end", async () => {
+  const rows: ContributionsRow[] = [{
+    id: "900", category: "plumber", claim_text: "Mr Moyo fixed my sink.", provider_name: "Mr Moyo",
+    community_id: COMMUNITY_ID, area: "Avondale", source: "whatsapp", relationship: "community_recommendation",
+    evidence_notes: "not independently verified", verification_status: "declared",
+    source_message_id: "512", related_conversation_id: "77", created_at: "2026-09-29T08:00:00.000Z",
+  }];
+  const { client: database } = contributionsClient(rows);
+  const reader: ContributionRepository = new SupabaseContributionRepository(database);
+  const records = await reader.findDeclaredByCommunity({ communityId: COMMUNITY_ID, area: "Avondale", category: "plumber" });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].verificationStatus, "declared");
+
+  const resolver = createTrustHubAnswerResolver(client(), () => NOW, undefined, reader);
+  const result = await resolver.resolve(request, { requesterConsentedToCommunity: true, communityAvailable: true });
+  assert.equal(result.status, "partially_answered");
+  assert.equal(result.evidence.length, 1);
+  assert.equal(result.evidence[0].source, "community");
+  assert.equal(result.evidence[0].sourceRecordId, "900");
+  assert.equal(result.evidence[0].verificationStatus, "declared");
+});
+
+test("the production factory rejects an invalid Supabase URL instead of silently falling back", async () => {
+  const originalUrl = process.env.SUPABASE_URL;
+  const originalKey = process.env.SUPABASE_SECRET_KEY;
+  const originalServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_URL = "http://example.com";
+  process.env.SUPABASE_SECRET_KEY = "key";
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  try {
+    const { createContributionRepository } = await import("../lib/contributions/repository.ts");
+    assert.throws(() => createContributionRepository(), /SUPABASE_URL must be a valid HTTPS URL/);
+  } finally {
+    if (originalUrl !== undefined) process.env.SUPABASE_URL = originalUrl;
+    if (originalKey !== undefined) process.env.SUPABASE_SECRET_KEY = originalKey;
+    if (originalServiceRole !== undefined) process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceRole;
+  }
 });

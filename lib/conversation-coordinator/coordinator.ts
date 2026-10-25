@@ -9,6 +9,9 @@ import { assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, ty
 import { parseNotificationPreference, preferenceReply } from "../notifications/community-missions.ts";
 import type { IdentityProvisioner } from "../identity/provisioner.ts";
 import { parseProfileCreationRequest } from "../identity/profile-intent.ts";
+import { formatServiceBoard, isMenuCommand, menuJourneyEntry, resolveMenuNumber } from "./service-board.ts";
+import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
+import { recognizeNonSearchIntent } from "./intents.ts";
 
 const NON_ANSWER = /^(?:thanks?(?: you)?|thank u|ok(?:ay)?|yes|yeah|yep|no|nope|sure|cool|alright|fine|good|please|nothing|never ?mind|not now|hi|hello|hey)$/i;
 const CITY_QUESTION = "Which city should I look in? An area is optional.";
@@ -80,6 +83,26 @@ function consentFromText(text: string): boolean | undefined {
   return undefined;
 }
 
+/**
+ * Journey follow-up helpers. Each reuses the SAME deterministic parser a
+ * natural-language message uses, so a numbered menu selection and its
+ * equivalent sentence reach identical handlers.
+ */
+function recruitmentRequest(text: string): NormalizedRequest | null {
+  const recognized = recognizeNonSearchIntent(text);
+  return recognized && recognized.request.questionType === "recruitment" ? recognized.request : null;
+}
+
+function addBusinessRequest(text: string): NormalizedRequest | null {
+  const recognized = recognizeNonSearchIntent(text);
+  return recognized && recognized.request.questionType === "add_business" ? recognized.request : null;
+}
+
+function reviewRequest(text: string): NormalizedRequest | null {
+  const recognized = recognizeNonSearchIntent(text);
+  return recognized && recognized.request.questionType === "review_write" ? recognized.request : null;
+}
+
 export class ConversationCoordinator {
   private readonly repository: RuntimeConversationRepository;
   private readonly resolver: AnswerResolver;
@@ -142,7 +165,43 @@ export class ConversationCoordinator {
     let task = conversation.activeTask ?? { seq: 1, completed: false };
     if ((turn.request || started) && task.completed) task = { seq: task.seq + 1, completed: false };
     const preference = !turn.request && !turn.media?.length ? parseNotificationPreference(turn.text) : null;
-    if (preference) {
+    // The MENU command and a bare menu number are handled before every other
+    // branch. They never start, complete or corrupt an active task, and a
+    // number never overrides an active clarification, consent or confirmation.
+    const menuOption = isMenuCommand(turn.text) ? null : resolveMenuNumber(turn.text);
+    if (isMenuCommand(turn.text) || menuOption) {
+      const board = formatServiceBoard();
+      if (isMenuCommand(turn.text)) {
+        action = "show_menu";
+        reply = board;
+        // MENU preserves the current state verbatim — clarification, community
+        // consent, human handoff or ready — so it never completes, cancels or
+        // corrupts an active task.
+        nextState = conversation.state;
+      } else if (menuOption!.status === "placeholder") {
+        action = "placeholder";
+        reply = `${board}\n\n${menuOption!.placeholderReply}`;
+        nextState = "ready_for_request";
+        // Even placeholder journeys keep their context, so a follow-up message
+        // continues the same journey instead of resetting to a generic prompt.
+        conversation.activeJourney = menuOption!.journey;
+      } else {
+        const entry = menuJourneyEntry(menuOption!.journey);
+        const starter = entry?.starterText ?? menuOption!.label;
+        action = "start_journey";
+        reply = `${board}\n\n${this.journeyStarter(menuOption!.journey, starter)}`;
+        nextState = conversation.state === "clarification_needed" ? "clarification_needed" : "ready_for_request";
+        // Remember which journey the numbered selection started so follow-up
+        // answers route through the same handler a natural-language message would.
+        conversation.activeJourney = menuOption!.journey;
+      }
+      // MENU and a menu number never complete, delete or corrupt an active task.
+      // The pending request and clarification are preserved so the user can
+      // still answer them; only unrelated stale state is cleared.
+      conversation.lastResolution = null;
+      conversation.lastAction = null;
+      conversation.pendingPermission = null;
+    } else if (preference) {
       action = "clarify";
       reply = preferenceReply(preference);
       nextState = priorState;
@@ -186,7 +245,7 @@ export class ConversationCoordinator {
       reply = consent
         ? "Thanks. I've recorded that this answered your question."
         : "Understood. I've recorded that this did not answer your question. You can refine the request or try another route.";
-    } else if (turn.contributionCandidate) {
+    } else if (turn.contributionCandidate && !conversation.activeJourney) {
       action = "contribution_recorded";
       reply = "Thanks. I saved this as an unverified community contribution for review. It is not yet a verified listing.";
       nextState = "ready_for_request";
@@ -194,6 +253,7 @@ export class ConversationCoordinator {
       action = "clarify";
       reply = this.library.greeting(turn.conversationId, conversation.assistantName)!.reply;
       if (priorState === "clarification_needed") reply = `${reply}\n\n${pendingQuestion}`;
+      else reply = `${reply}\n\n${formatServiceBoard()}`;
       nextState = priorState === "clarification_needed" ? priorState : "ready_for_request";
     } else if (continued) {
       conversation.lastRequest = continued;
@@ -234,6 +294,21 @@ export class ConversationCoordinator {
       reply = reviewsReply;
       action = reviewsAction;
       nextState = reviewsState;
+    } else if (conversation.activeJourney && !turn.media?.length && !turn.contributionCandidate) {
+      // A follow-up to a numbered menu selection routes through the SAME
+      // handler a natural-language message would use, so the journey stays
+      // coherent instead of resetting to a generic prompt. It wins over the
+      // generic clarification branch below, so a menu number and its
+      // equivalent sentence reach identical handlers.
+      const routed = await this.routeJourneyFollowUp(conversation.activeJourney, turn, conversation, priorState);
+      reply = routed.reply;
+      action = routed.action;
+      nextState = routed.state;
+      if (routed.resolution) resolution = routed.resolution;
+      const answered = routed.action === "answer" && routed.resolution && (routed.resolution.status === "answered" || routed.resolution.status === "partially_answered") && routed.resolution.evidence.length > 0;
+      if (answered || routed.state === "resolved" || routed.state === "unresolved" || routed.state === "abandoned") {
+        conversation.activeJourney = undefined;
+      }
     } else if (!turn.request && !turn.media?.length && priorState === "clarification_needed" && conversation.lastRequest) {
       action = "clarify";
       reply = pendingQuestion;
@@ -250,13 +325,14 @@ export class ConversationCoordinator {
       const request: NormalizedRequest = carried?.city && !turn.request.location?.city
         ? { ...turn.request, location: { ...turn.request.location, country: turn.request.location?.country ?? carried.country ?? null, city: carried.city, area: turn.request.location?.area ?? carried.area ?? null } }
         : turn.request;
-      // An unrelated topic change clears the previous request so a later "yes"
+// An unrelated topic change clears the previous request so a later "yes"
       // cannot be mistaken for a consent or confirmation of a search the user
       // has already moved on from. Only the clarification path above keeps it.
       conversation.lastRequest = null;
       conversation.lastResolution = null;
       conversation.lastAction = null;
       conversation.pendingPermission = null;
+      conversation.activeJourney = undefined;
       conversation.lastRequest = request;
       action = "answer";
       resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: priorState === "clarification_needed" });
@@ -314,6 +390,31 @@ export class ConversationCoordinator {
     const city = next?.location?.city;
     if (!city || city.toLocaleLowerCase() === pending.location?.city?.toLocaleLowerCase() || !this.cityValidator) return next;
     return await this.cityValidator(city, next.location?.country ?? null) ? next : null;
+  }
+
+  /**
+   * The opening question for a numbered menu selection. Every implemented
+   * journey routes into the SAME handler natural-language messages use, so a
+   * menu number and an equivalent sentence reach identical journeys. Only
+   * placeholder journeys call this, and they are handled inline instead.
+   */
+  private journeyStarter(journey: string, label: string): string {
+    switch (journey) {
+      case "business_discovery":
+        return `Got it — option 1, finding a business or service. What would you like to find, and where?`;
+      case "business_contribution":
+        return `Got it — option 2, adding a business. What is the business called, and where is it?`;
+      case "review_submission":
+        return `Got it — option 3, writing a review. Which business, and what was your experience?`;
+      case "jobs_recruitment":
+        return `Got it — option 6, jobs and recruitment. Are you looking for work, or looking to hire someone?`;
+      case "housing_rentals":
+        return `Got it — option 7, housing and rentals. Are you looking for a place to stay, or offering one?`;
+      case "community_intelligence":
+        return `Got it — option 8, Community Intelligence. What would you like to learn more about in your community?`;
+      default:
+        return `Got it — ${label}. Tell me more and I will help you with that.`;
+    }
   }
 
   private async mapResolution(resolution: ResolutionResult): Promise<{ action: CoordinatorAction; reply: string; nextState: RuntimeState }> {
@@ -439,6 +540,190 @@ export class ConversationCoordinator {
     const resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: false });
     const { action, reply, nextState } = await this.mapResolution(resolution);
     return { action, reply, state: nextState };
+  }
+
+  /**
+   * Option 4 — Rate a business.
+   *
+   * No rating persistence exists in TrustHub Connect yet, so this journey
+   * collects the details honestly and offers the supported alternative
+   * (writing a review, option 3). It never claims a rating was recorded.
+   */
+  private handleRateBusiness(turn: IncomingTurn, conversation: RuntimeConversation): { action: CoordinatorAction; reply: string; state: RuntimeState } {
+    const request = turn.request!;
+    const category = request.category;
+    const location = request.location;
+    if (category && location?.city) {
+      conversation.lastRequest = request;
+      return {
+        action: "clarify",
+        reply: `I'd be happy to help you rate "${category}" in ${location.city}${location.area ? `, ${location.area}` : ""}. Which business did you use?`,
+        state: "clarification_needed",
+      };
+    }
+    if (!category) {
+      return { action: "clarify", reply: "What type of business or service would you like to rate?", state: "clarification_needed" };
+    }
+    if (!location?.city) {
+      return { action: "clarify", reply: `Which city is the "${category}" you want to rate located in?`, state: "clarification_needed" };
+    }
+    return { action: "clarify", reply: "Which business would you like to rate, and in which city is it?", state: "clarification_needed" };
+  }
+
+  /**
+   * Option 5 — Buy or sell.
+   *
+   * No marketplace persistence exists, so this journey gathers the details and
+   * routes the user to the supported discovery path instead of fabricating a
+   * listing or transaction.
+   */
+  private handleBuySell(turn: IncomingTurn, conversation: RuntimeConversation): { action: CoordinatorAction; reply: string; state: RuntimeState } {
+    const request = turn.request!;
+    const category = request.category;
+    const location = request.location;
+    if (category && location?.city) {
+      conversation.lastRequest = request;
+      return {
+        action: "clarify",
+        reply: `I can help you look for ${category} in ${location.city}. Buying and selling directly is not available yet, but I can show you the local businesses that are listed so you can contact them. Is that useful?`,
+        state: "clarification_needed",
+      };
+    }
+    if (!category) {
+      return { action: "clarify", reply: "Are you looking to buy something, or sell something? What kind of item or service?", state: "clarification_needed" };
+    }
+    if (!location?.city) {
+      return { action: "clarify", reply: `Which city should I look in for ${category}?`, state: "clarification_needed" };
+    }
+    return { action: "clarify", reply: "What are you looking to buy or sell, and where?", state: "clarification_needed" };
+  }
+
+  /**
+   * Option 9 — Improve TrustHub.
+   *
+   * Product feedback has no persistence path yet, so this journey records the
+   * suggestion in conversation state and tells the user honestly that it is
+   * being noted for the team. It never claims the feedback was saved to a
+   * system the user cannot see.
+   */
+  private handleProductFeedback(turn: IncomingTurn, conversation: RuntimeConversation): { action: CoordinatorAction; reply: string; state: RuntimeState } {
+    const text = turn.text.trim();
+    if (text.length < 5 || /^improve trusthub$/i.test(text)) {
+      return {
+        action: "clarify",
+        reply: "Tell me what would make your experience better — what should we improve or add?",
+        state: "clarification_needed",
+      };
+    }
+    conversation.lastRequest = turn.request ?? { text, intent: null, category: null, location: null, questionType: "general" };
+    conversation.lastAction = "placeholder";
+    return {
+      action: "placeholder",
+      reply: `Thanks — I've noted your suggestion about "${text.slice(0, 120)}" for the TrustHub team. Product feedback is not saved to a system you can see yet, but your suggestion is recorded in this conversation. Is there anything else I can help with?`,
+      state: "ready_for_request",
+    };
+  }
+
+  /**
+   * Option 10 — Business Growth.
+   *
+   * No business analytics or growth services exist yet, so this journey is
+   * honest about that and offers the supported alternative: improving a
+   * business listing so more people can discover it.
+   */
+  private handleBusinessGrowth(turn: IncomingTurn, conversation: RuntimeConversation): { action: CoordinatorAction; reply: string; state: RuntimeState } {
+    const text = turn.text.trim();
+    if (text.length < 5 || /^business growth$/i.test(text)) {
+      return {
+        action: "clarify",
+        reply: "Business Growth is planned, not available yet. The supported way to help your business get discovered right now is to add or improve its listing (option 2). Would you like to do that?",
+        state: "ready_for_request",
+      };
+    }
+    conversation.lastRequest = turn.request ?? { text, intent: null, category: null, location: null, questionType: "general" };
+    return {
+      action: "placeholder",
+      reply: `I've noted your interest in Business Growth regarding "${text.slice(0, 120)}". Business insights and growth support are planned, not available yet. You can add or improve a business listing now (option 2), which is the supported way to help your business get discovered.`,
+      state: "ready_for_request",
+    };
+  }
+
+  /**
+   * Routes a follow-up message to the journey a numbered menu selection
+   * started. Every implemented journey reaches the SAME handler a
+   * natural-language message would use, so the numbered path and the
+   * natural-language path cannot drift.
+   *
+   * A journey that has no further handler is answered honestly rather than
+   * silently resetting the conversation.
+   */
+  private async routeJourneyFollowUp(journey: string, turn: IncomingTurn, conversation: RuntimeConversation, priorState: RuntimeState): Promise<{ action: CoordinatorAction; reply: string; state: RuntimeState; resolution: ResolutionResult | null }> {
+    switch (journey) {
+      case "business_discovery":
+      case "housing_rentals": {
+        const request = turn.request ?? parseLocalSearchRequest(turn.text);
+        if (!request) return { action: "clarify", reply: "Tell me what you'd like to find and where.", state: "clarification_needed", resolution: null };
+        conversation.lastRequest = request;
+        const resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: false });
+        const mapped = await this.mapResolution(resolution);
+        return { action: mapped.action, reply: mapped.reply, state: mapped.nextState, resolution };
+      }
+      case "jobs_recruitment": {
+        const request = turn.request ?? recruitmentRequest(turn.text);
+        if (!request) return { action: "clarify", reply: "Are you looking for work, or looking to hire someone?", state: "clarification_needed", resolution: null };
+        conversation.lastRequest = request;
+        const resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: false });
+        const mapped = await this.mapResolution(resolution);
+        return { action: mapped.action, reply: mapped.reply, state: mapped.nextState, resolution };
+      }
+      case "business_contribution": {
+        // Prefer the explicit add-business recognizer, then an ordinary search
+        // phrase ("bakery in Harare"). Only when the user answers the opening
+        // question with just a name ("Sunny Bake") — which is not a complete
+        // search — carry the category and city from the previous turn so the
+        // existing handler asks for the missing city.
+        const carried = conversation.lastRequest && turn.text.trim() && priorState === "clarification_needed" && !parseLocalSearchRequest(turn.text)
+          ? { text: turn.text, intent: conversation.lastRequest.intent, category: conversation.lastRequest.category, location: conversation.lastRequest.location, questionType: conversation.lastRequest.questionType, entityName: turn.text.trim() }
+          : null;
+        const request = turn.request ?? addBusinessRequest(turn.text) ?? carried ?? parseLocalSearchRequest(turn.text);
+        if (!request) return { action: "clarify", reply: "What is the business called, and where is it?", state: "clarification_needed", resolution: null };
+        return { ...(await this.handleAddBusiness({ ...turn, request }, conversation)), resolution: null };
+      }
+      case "review_submission": {
+        const carried = conversation.lastRequest && turn.text.trim() && priorState === "clarification_needed" && !parseLocalSearchRequest(turn.text)
+          ? { text: turn.text, intent: conversation.lastRequest.intent, category: conversation.lastRequest.category, location: conversation.lastRequest.location, questionType: conversation.lastRequest.questionType, entityName: turn.text.trim() }
+          : null;
+        const request = turn.request ?? reviewRequest(turn.text) ?? carried ?? parseLocalSearchRequest(turn.text);
+        if (!request) return { action: "clarify", reply: "Which business would you like to review, and in which city is it?", state: "clarification_needed", resolution: null };
+        return { ...(await this.handleWriteReview({ ...turn, request }, conversation)), resolution: null };
+      }
+      case "community_intelligence": {
+        const request = turn.request ?? parseLocalSearchRequest(turn.text);
+        if (!request) return { action: "clarify", reply: "What would you like to learn more about in your community?", state: "clarification_needed", resolution: null };
+        conversation.lastRequest = request;
+        const resolution = await this.resolve(request, { ...turn.resolverContext, clarificationAsked: false });
+        const mapped = await this.mapResolution(resolution);
+        return { action: mapped.action, reply: mapped.reply, state: mapped.nextState, resolution };
+      }
+      case "business_rating": {
+        const request = turn.request ?? { text: turn.text, intent: null, category: null, location: null, questionType: "general" };
+        return { ...this.handleRateBusiness({ ...turn, request }, conversation), resolution: null };
+      }
+      case "buy_sell": {
+        const request = turn.request ?? { text: turn.text, intent: null, category: null, location: null, questionType: "general" };
+        return { ...this.handleBuySell({ ...turn, request }, conversation), resolution: null };
+      }
+      case "product_feedback": {
+        const request = turn.request ?? { text: turn.text, intent: null, category: null, location: null, questionType: "general" };
+        return { ...this.handleProductFeedback({ ...turn, request }, conversation), resolution: null };
+      }
+      case "business_growth": {
+        const request = turn.request ?? { text: turn.text, intent: null, category: null, location: null, questionType: "general" };
+        return { ...this.handleBusinessGrowth({ ...turn, request }, conversation), resolution: null };
+      }
+      default:
+        return { action: "clarify", reply: "I can help with that. Tell me more and I'll route it.", state: "clarification_needed", resolution: null };
+    }
   }
 }
 

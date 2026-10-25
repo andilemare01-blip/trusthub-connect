@@ -7,6 +7,9 @@ import { AiGateway } from "./gateway.ts";
 import { readAiConfig } from "./config.ts";
 import { RuntimeEventAiSpendLedger } from "./spend-ledger.ts";
 import type { SupabaseDataClient } from "../supabase/data-client.ts";
+import { loadCorpus } from "../understanding/corpus-loader.ts";
+import { matchExample } from "../understanding/corpus-intent-mapper.ts";
+import type { UnderstandingExample } from "../understanding/corpus-schema.ts";
 
 export interface StructuredUnderstanding {
   source: "deterministic" | "ai_assisted";
@@ -55,12 +58,34 @@ function build(text: string, request: NormalizedRequest | null): StructuredUnder
   return { source: "deterministic", aiProviderStatus: "unavailable", request: effectiveRequest, contribution, urgency, answerability, clarificationQuestion, escalation };
 }
 
+/** Process-lifetime cache of the validated corpus so each message does not re-read disk. */
+let corpusExamples: UnderstandingExample[] | null = null;
+let corpusLoaded = false;
+
+function loadValidatedCorpusExamples(): UnderstandingExample[] {
+  if (corpusLoaded) return corpusExamples ?? [];
+  corpusLoaded = true;
+  try {
+    const result = loadCorpus();
+    corpusExamples = result.valid ? result.examples : [];
+  } catch {
+    corpusExamples = [];
+  }
+  return corpusExamples ?? [];
+}
+
 export class DeterministicUnderstandingProvider implements ConversationUnderstandingProvider {
   async understand(text: string): Promise<StructuredUnderstanding> {
     const searchRequest = parseLocalSearchRequest(text);
     if (searchRequest) return build(text, searchRequest);
     const recognized = recognizeNonSearchIntent(text);
-    return build(text, recognized?.request ?? null);
+    if (recognized) return build(text, recognized.request);
+    // Corpus-backed recognition as a gap filler: only when neither explicit
+    // deterministic recognizer fires does a validated exact corpus match supply
+    // the intent. Deterministic rules always take precedence.
+    const corpusRequest = matchExample(text, loadValidatedCorpusExamples());
+    if (corpusRequest) return build(text, corpusRequest);
+    return build(text, null);
   }
 }
 

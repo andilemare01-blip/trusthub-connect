@@ -8,21 +8,25 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "corpus:report": "node --experimental-strip-types scripts/corpus-add.mts report",
+    "corpus:check": "node --experimental-strip-types scripts/corpus-add.mts check",
+    "corpus:add": "node --experimental-strip-types scripts/corpus-add.mts add",
     "audit:categories": "node --experimental-strip-types scripts/audit-business-categories.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.117.2",
     "dotenv": "^18.0.5",
-    "next": "16.3.6",
+    "next": "^16.4.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.6",
+    "eslint-config-next": "^16.4.1",
     "typescript": "^5"
   }
 }

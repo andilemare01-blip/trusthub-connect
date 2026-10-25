@@ -1,11 +1,6 @@
 import type { CapabilityDeclaration, ProviderRecommendation } from "@/types/contribution";
-
-export class NotConnectedError extends Error {
-  constructor(method: string) {
-    super(`ContributionRepository.${method} is not connected yet.`);
-    this.name = "NotConnectedError";
-  }
-}
+import { createSupabaseServerClient } from "../supabase/server-client.ts";
+import { SupabaseContributionRepository } from "./supabase-repository.ts";
 
 /**
  * A persisted community contribution read back for answer resolution. This is
@@ -60,21 +55,12 @@ export interface ContributionRepository {
   findDeclaredByCommunity(query: DeclaredContributionQuery): Promise<DeclaredContributionRecord[]>;
 }
 
-class NotConnectedContributionRepository implements ContributionRepository {
-  async declareCapability(): Promise<CapabilityDeclaration> {
-    throw new NotConnectedError("declareCapability");
-  }
-
-  async recommendProvider(): Promise<ProviderRecommendation> {
-    throw new NotConnectedError("recommendProvider");
-  }
-
-  async findDeclaredByCommunity(): Promise<DeclaredContributionRecord[]> {
-    throw new NotConnectedError("findDeclaredByCommunity");
-  }
-}
-
-/** TODO: implement once the contribution schema is designed and approved. */
+/**
+ * Server-only production adapter over the existing `public.contributions` table.
+ * The read path is wired through the same Supabase client the write path uses,
+ * so community isolation and declared-only filtering are enforced in the
+ * database query, not merely in application-side filtering.
+ */
 export function createContributionRepository(): ContributionRepository {
-  return new NotConnectedContributionRepository();
+  return new SupabaseContributionRepository(createSupabaseServerClient());
 }

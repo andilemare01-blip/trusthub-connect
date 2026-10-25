@@ -32,7 +32,8 @@ test("a greeting is a library new_hi entry introduced under the assigned name", 
   assert.equal(result.conversation.assistantName, name);
   assert.match(result.reply, new RegExp(`I'm ${name}\\b`));
   const source = library.byCategory("new_hi").map((entry) => [applyAssistantName(entry.response, name), entry.nextMove]);
-  assert.ok(source.some(([response, nextMove]) => result.reply === `${response}\n\n${nextMove}`));
+  assert.ok(source.some(([response, nextMove]) => result.reply.startsWith(`${response}\n\n${nextMove}\n\n`)), "fresh greeting must open with the library entry then the Service Board");
+  assert.match(result.reply, /Service Board/);
   assert.notEqual(result.reply, "What are you trying to find or sort out?");
 });
 
@@ -61,7 +62,7 @@ test("accommodation request, then 'Anywhere in Harare', continues instead of res
   assert.doesNotMatch(third.reply, /trying to find or sort out/);
   assert.equal(third.state, "answer_found");
   assert.match(third.reply, /Sunrise Guest House/);
-  assert.equal(third.conversation.lastRequest?.category, "place to stay");
+  assert.equal(third.conversation.lastRequest?.category, "accommodation");
   assert.equal(third.conversation.lastRequest?.location?.city, "Harare");
   assert.equal(searches.length, 1);
   assert.equal(third.conversation.assistantName, first.conversation.assistantName);

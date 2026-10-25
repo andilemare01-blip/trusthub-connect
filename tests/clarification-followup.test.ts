@@ -67,7 +67,7 @@ test("legitimate city replies still continue the request", async () => {
     const { coordinator } = setup();
     await say(coordinator, `4${index}`, "I need a place to stay", 0);
     const result = await say(coordinator, `4${index}`, reply, 1);
-    assert.equal(result.conversation.lastRequest?.category, "place to stay", reply);
+    assert.equal(result.conversation.lastRequest?.category, "accommodation", reply);
     assert.match(result.conversation.lastRequest?.location?.city ?? "", /^(Harare|Bulawayo)$/, reply);
     assert.notEqual(result.state, "clarification_needed", reply);
   }
@@ -80,7 +80,7 @@ test("a greeting during clarification greets by name, keeps the pending request 
   assert.equal(greeted.state, "clarification_needed");
   assert.match(greeted.reply, new RegExp(`I'm ${first.conversation.assistantName}\\b`));
   assert.match(greeted.reply, /Which city should I look in\?/);
-  assert.equal(greeted.conversation.lastRequest?.category, "place to stay");
+  assert.equal(greeted.conversation.lastRequest?.category, "accommodation");
   const answered = await say(coordinator, "51", "Harare", 2);
   assert.equal(answered.conversation.lastRequest?.location?.city, "Harare");
 });

@@ -4,7 +4,7 @@ import { PolicyAnswerResolver } from "../lib/answer-resolution/resolver.ts";
 import type { AnswerSource, EvidenceItem, NormalizedRequest } from "../lib/answer-resolution/types.ts";
 import { ConversationCoordinator, type CityValidator } from "../lib/conversation-coordinator/coordinator.ts";
 import { InMemoryRuntimeConversationRepository } from "../lib/conversation-coordinator/repository.ts";
-import { WisdomLibrary } from "../lib/conversation-coordinator/wisdom-library.ts";
+import { ASSISTANT_NAMES, WisdomLibrary } from "../lib/conversation-coordinator/wisdom-library.ts";
 import { createAnswerGenerator } from "../lib/answer-resolution/response-generator.ts";
 import { AiAnswerGenerator } from "../lib/ai/answer-generator.ts";
 import { readAiConfig, DEFAULT_OPENROUTER_MODEL, type AiConfigStatus } from "../lib/ai/config.ts";
@@ -93,19 +93,25 @@ test("3b. a request made while a clarification is pending keeps the city already
   assert.equal(result.state, "answer_found");
 });
 
-test("4. assistant name is consistently Wisdom across all conversations", async () => {
+test("4. assistant name is assigned once per conversation and drawn from the ten-name family", async () => {
   const { coordinator } = stack();
   const names = new Set<string | undefined>();
   for (const id of ["11", "12", "13", "14", "15"]) {
     const a = await say(coordinator, id, "Harare", 0);
     const b = await say(coordinator, id, "a driving school", 1);
+    // The same conversation keeps the same name across messages and restarts.
     assert.equal(a.conversation.assistantName, b.conversation.assistantName);
     assert.equal(b.conversation.lastRequest?.location?.city, "Harare");
     names.add(b.conversation.assistantName);
   }
-  // All conversations should use the canonical "Wisdom" name
-  assert.equal(names.size, 1);
-  assert.ok(names.has("Wisdom"));
+  // Every assigned name is one of the ten family members.
+  for (const name of names) {
+    assert.ok(name != null);
+    assert.ok(ASSISTANT_NAMES.includes(name as (typeof ASSISTANT_NAMES)[number]));
+  }
+  // The assistant does not introduce itself as Wisdom on every new conversation.
+  assert.notEqual(names.size, 1);
+  assert.ok([...names].some((name) => name !== "Wisdom"));
 });
 
 test("8. a multi-message search completes exactly one task; a new search starts the next one", async () => {

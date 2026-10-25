@@ -5,7 +5,7 @@ import type { DetectedContribution } from "../contributions/detection";
 import type { StructuredUnderstanding } from "../ai/understanding";
 
 export type RuntimeState = "ready_for_request" | "understanding_request" | "clarification_needed" | "searching_trusthub" | "answer_found" | "answer_uncertain" | "asking_community" | "waiting_for_community" | "trust_agent_offer" | "human_handoff" | "waiting_for_agent" | "profile_creation" | "profile_created" | "business_submission" | "review_writing" | "resolved" | "abandoned" | "unresolved";
-export type CoordinatorAction = "answer" | "clarify" | "contribution_recorded" | "ask_community_permission" | "community_request_consented" | "community_request_declined" | "request_human_permission" | "human_handoff_consented" | "human_handoff_declined" | "final_unresolved" | "profile_creation" | "profile_created" | "business_submission" | "review_writing";
+export type CoordinatorAction = "answer" | "clarify" | "contribution_recorded" | "ask_community_permission" | "community_request_consented" | "community_request_declined" | "request_human_permission" | "human_handoff_consented" | "human_handoff_declined" | "final_unresolved" | "profile_creation" | "profile_created" | "business_submission" | "review_writing" | "show_menu" | "start_journey" | "placeholder";
 
 export interface RuntimeConversation {
   id: string;
@@ -18,6 +18,11 @@ export interface RuntimeConversation {
   assistantName?: string;
   /** One search task spans clarifications and follow-ups; it completes when a useful result is delivered. */
   activeTask?: { seq: number; completed: boolean };
+  /** The Service Board journey a numbered selection started, if any. Preserved
+   * across follow-ups so a menu number and its natural-language equivalent
+   * reach the same handler; cleared when the journey finishes or the user
+   * starts an unrelated task. */
+  activeJourney?: string;
   messages: ConversationMessage[];
   transitions: { from: RuntimeState; to: RuntimeState; at: string; reason: string }[];
   updatedAt: string;

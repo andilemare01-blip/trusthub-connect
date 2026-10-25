@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     }
     let delivery;
     try {
-      delivery = await provider.sendMessage({ toPhoneNumber: message.senderPhoneNumber, text: result.reply, correlationId: requestId });
+      delivery = await provider.sendMessage({ toPhoneNumber: message.senderPhoneNumber, text: result.reply, correlationId: requestId, interactive: (result as any).interactive });
     } catch (error) {
       await recordOperationalEvent(client, { kind: "outbound_failed", sourceId: requestId, correlationId: result.conversationId, actor: "provider", attributes: { detail: error instanceof Error ? error.message.slice(0, 100) : "unknown" } });
       throw error;

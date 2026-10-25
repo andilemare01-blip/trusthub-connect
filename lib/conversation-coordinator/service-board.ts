@@ -33,7 +33,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 1,
     section: SERVICE_BOARD_SECTION_DISCOVER,
-    label: "Find a business or service",
+    label: "🔎 Find a Business or Service",
     description: "Find barbers, plumbers, shops, restaurants and other services by location.",
     journey: "business_discovery",
     status: "implemented",
@@ -42,7 +42,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 2,
     section: SERVICE_BOARD_SECTION_DISCOVER,
-    label: "Add a business",
+    label: "🏪 Add a Business",
     description: "Put a local business on the map so more people can discover it.",
     journey: "business_contribution",
     status: "implemented",
@@ -51,7 +51,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 3,
     section: SERVICE_BOARD_SECTION_DISCOVER,
-    label: "Write a review",
+    label: "⭐ Write a Review",
     description: "Share your real experience to help other people make informed choices.",
     journey: "review_submission",
     status: "implemented",
@@ -60,7 +60,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 4,
     section: SERVICE_BOARD_SECTION_DISCOVER,
-    label: "Rate a business",
+    label: "🌟 Rate a Business",
     description: "Give a business a rating through the supported TrustHub process.",
     journey: "business_rating",
     status: "placeholder",
@@ -69,16 +69,16 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 5,
     section: SERVICE_BOARD_SECTION_OPPORTUNITY,
-    label: "Buy or sell",
+    label: "🛍️ Buy & Sell",
     description: "Get help with buying, selling or finding relevant opportunities.",
     journey: "buy_sell",
-    status: "placeholder",
-    placeholderReply: "Buying and selling is not available yet. Tell me what you want to buy or sell and I will let you know when that is supported, or help you find the relevant local business instead.",
+    status: "implemented",
+    placeholderReply: "",
   },
   {
     number: 6,
     section: SERVICE_BOARD_SECTION_OPPORTUNITY,
-    label: "Jobs & recruitment",
+    label: "💼 Jobs & Recruitment",
     description: "Explore job opportunities or share a recruitment need.",
     journey: "jobs_recruitment",
     status: "implemented",
@@ -87,7 +87,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 7,
     section: SERVICE_BOARD_SECTION_OPPORTUNITY,
-    label: "Houses & rentals",
+    label: "🏠 Houses & Rentals",
     description: "Find or advertise accommodation using the information available.",
     journey: "housing_rentals",
     status: "implemented",
@@ -96,7 +96,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 8,
     section: SERVICE_BOARD_SECTION_COMMUNITY,
-    label: "Community Intelligence",
+    label: "🧠 Community Intelligence",
     description: "Discover local knowledge, surface missing information and help your community share useful, validated information.",
     journey: "community_intelligence",
     status: "implemented",
@@ -105,7 +105,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 9,
     section: SERVICE_BOARD_SECTION_COMMUNITY,
-    label: "Improve TrustHub",
+    label: "💡 Improve TrustHub",
     description: "Suggest improvements and tell us what would make your experience better.",
     journey: "product_feedback",
     status: "placeholder",
@@ -114,7 +114,7 @@ export const SERVICE_BOARD_OPTIONS: readonly ServiceBoardOption[] = [
   {
     number: 10,
     section: SERVICE_BOARD_SECTION_COMMUNITY,
-    label: "Business Growth",
+    label: "📈 Business Growth",
     description: "A space for business insights and growth support as these capabilities become available.",
     journey: "business_growth",
     status: "placeholder",

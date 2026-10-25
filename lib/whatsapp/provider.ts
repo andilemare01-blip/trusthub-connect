@@ -7,7 +7,33 @@ export class NotConnectedError extends Error {
   }
 }
 
-export interface OutboundWhatsAppMessage { toPhoneNumber: string; text: string; correlationId?: string; }
+export interface OutboundWhatsAppMessage { 
+  toPhoneNumber: string; 
+  text: string; 
+  correlationId?: string;
+  interactive?: WhatsAppInteractiveMessage;
+}
+
+export interface WhatsAppInteractiveButton {
+  id: string;
+  title: string;
+}
+
+export interface WhatsAppInteractiveListRow {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export interface WhatsAppInteractiveMessage {
+  type: "button" | "list";
+  header?: string;
+  body?: string;
+  footer?: string;
+  buttonText?: string; // for list
+  buttons?: WhatsAppInteractiveButton[]; // for button type (max 3)
+  sections?: Array<{ title?: string; rows: WhatsAppInteractiveListRow[] }>; // for list
+}
 export interface WhatsAppInboundMessage {
   providerMessageId: string;
   senderPhoneNumber: string;

@@ -35,12 +35,50 @@ export class MetaCloudWhatsAppProvider implements WhatsAppProvider {
       logWhatsAppDiagnostic(requestId, "meta_outbound_response", { outcome: "failed", ...diagnosticError(error), durationMs: Date.now() - startedAt });
       throw error;
     }
-    const payload = { messaging_product: "whatsapp", recipient_type: "individual", to: message.toPhoneNumber.replace(/^\+/, ""), type: "text", text: { body: message.text } };
+    let payload: any;
+    if (message.interactive?.type === "button" && message.interactive.buttons?.length) {
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: message.toPhoneNumber.replace(/^\+/, ""),
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: message.interactive.body || message.text },
+          action: {
+            buttons: message.interactive.buttons.slice(0, 3).map((btn) => ({
+              type: "reply",
+              reply: { id: btn.id, title: btn.title.slice(0, 20) }
+            }))
+          }
+        }
+      };
+      if (message.interactive.header) payload.interactive.header = { type: "text", text: message.interactive.header };
+      if (message.interactive.footer) payload.interactive.footer = { text: message.interactive.footer };
+    } else if (message.interactive?.type === "list" && message.interactive.sections?.length) {
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: message.toPhoneNumber.replace(/^\+/, ""),
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: { text: message.interactive.body || message.text },
+          action: {
+            button: message.interactive.buttonText || "Select",
+            sections: message.interactive.sections
+          }
+        }
+      };
+      if (message.interactive.header) payload.interactive.header = { type: "text", text: message.interactive.header };
+      if (message.interactive.footer) payload.interactive.footer = { text: message.interactive.footer };
+    } else {
+      payload = { messaging_product: "whatsapp", recipient_type: "individual", to: message.toPhoneNumber.replace(/^\+/, ""), type: "text", text: { body: message.text } };
+    }
     logWhatsAppDiagnostic(requestId, "meta_outbound_send", {
       outcome: "attempted",
       messageType: payload.type,
       payloadFields: Object.keys(payload),
-      textFields: Object.keys(payload.text),
       graphApiVersion: version.slice(0, 20),
       phoneNumberIdPresent: true,
       phoneNumberIdLength: phoneNumberId.length,

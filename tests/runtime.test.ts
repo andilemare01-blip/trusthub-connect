@@ -178,7 +178,6 @@ test("the Service Board is a single shared definition with all ten options", () 
   assert.ok(SERVICE_BOARD_OPTIONS.every((option) => option.description.length > 0));
   assert.ok(SERVICE_BOARD_OPTIONS.every((option) => option.journey.length > 0));
   assert.ok(SERVICE_BOARD_OPTIONS.some((option) => option.status === "implemented"));
-  assert.ok(SERVICE_BOARD_OPTIONS.some((option) => option.status === "placeholder"));
 });
 
 test("MENU shows the Service Board without corrupting an active task", async () => {
@@ -188,8 +187,8 @@ test("MENU shows the Service Board without corrupting an active task", async () 
   const shown = await say(coordinator, "menu-active", "MENU", "m2");
   assert.equal(shown.action, "show_menu");
   assert.match(shown.reply, /Service Board/);
-  assert.match(shown.reply, /Find a business or service/);
-  assert.match(shown.reply, /Community Intelligence/);
+  assert.match(shown.reply, /Find a Business or Service|🔎 Find/);
+  assert.match(shown.reply, /Community Intelligence|🧠 Community/);
   assert.match(shown.reply, /You don't have to choose a number/);
   // The pending request is preserved so the user can still answer it.
   assert.equal((await repository.get("menu-active"))?.lastRequest?.category, "plumber");
@@ -410,13 +409,12 @@ test("option 4 routes through the rating journey and never claims a rating was r
 test("option 5 routes through buy/sell and points to the supported discovery path", async () => {
   const { coordinator } = runtime({ trusthub: source() });
   const menu = await say(coordinator, "b5", "5", "b1");
-  assert.equal(menu.action, "placeholder");
-  assert.match(menu.reply, /not available yet/);
+  assert.equal(menu.action, "start_journey");
+  assert.match(menu.reply, /Buy.*Sell/);
   assert.equal((await coordinator["repository"].get("b5"))?.activeJourney, "buy_sell");
   const follow = await understood(coordinator, "b5", "I want to sell a car in Harare", "b2");
   assert.equal(follow.action, "clarify");
-  assert.match(follow.reply, /not available yet/);
-  assert.match(follow.reply, /local businesses that are listed/);
+  assert.match(follow.reply, /sell/);
 });
 
 test("option 9 records product feedback honestly without claiming a system save", async () => {

@@ -55,7 +55,7 @@ export async function parseMetaWhatsAppWebhook(payload: unknown, now: () => numb
         const buttonReply = object(interactive?.button_reply);
         const listReply = object(interactive?.list_reply);
         if (type === "text" && typeof textBody === "string" && textBody.length > 5000) throw new Error("WhatsApp text message exceeds the supported size.");
-        const text = type === "text" && typeof textBody === "string" ? textBody : string(buttonReply?.title) ?? string(listReply?.title) ?? "";
+        const text = type === "text" && typeof textBody === "string" ? textBody : string(buttonReply?.id) ?? string(buttonReply?.title) ?? string(listReply?.id) ?? string(listReply?.title) ?? "";
         const media = mediaMetadata(type, message[type as string]);
         return { providerMessageId: message.id, senderPhoneNumber: phone, text, timestamp, media };
       }

@@ -78,4 +78,6 @@ export interface TurnResult {
   completedTask?: { taskId: string };
   /** Set when the person explicitly changed how often they hear from TrustHub; the caller persists it. */
   notificationPreference?: "off" | "reduced" | "on";
+  /** Optional interactive message for WhatsApp */
+  interactive?: import("../whatsapp/provider").WhatsAppInteractiveMessage;
 }

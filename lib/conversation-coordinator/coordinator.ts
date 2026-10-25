@@ -401,17 +401,19 @@ export class ConversationCoordinator {
   private journeyStarter(journey: string, label: string): string {
     switch (journey) {
       case "business_discovery":
-        return `Got it — option 1, finding a business or service. What would you like to find, and where?`;
+        return `Got it — option 1, finding a business or service. 🔎 What would you like to find, and where?`;
       case "business_contribution":
-        return `Got it — option 2, adding a business. What is the business called, and where is it?`;
+        return `Got it — option 2, adding a business. 🏪 What is the business called, and where is it?`;
       case "review_submission":
-        return `Got it — option 3, writing a review. Which business, and what was your experience?`;
+        return `Got it — option 3, writing a review. ⭐ Which business, and what was your experience?`;
       case "jobs_recruitment":
-        return `Got it — option 6, jobs and recruitment. Are you looking for work, or looking to hire someone?`;
+        return `Got it — option 6, jobs and recruitment. 💼 Are you looking for work, or looking to hire someone?`;
       case "housing_rentals":
-        return `Got it — option 7, housing and rentals. Are you looking for a place to stay, or offering one?`;
+        return `Got it — option 7, housing and rentals. 🏠 Are you looking for a place to stay, or offering one?`;
       case "community_intelligence":
-        return `Got it — option 8, Community Intelligence. What would you like to learn more about in your community?`;
+        return `Got it — option 8, Community Intelligence. 🧠 What would you like to learn more about in your community?`;
+      case "buy_sell":
+        return `🛍️ Buy & Sell\n\nWhat would you like to do?\n\n* 🛒 Buy something\n* 🏷️ Sell something\n* 🔙 Back to the main menu\n\nJust pick one or tell me in your own words!`;
       default:
         return `Got it — ${label}. Tell me more and I will help you with that.`;
     }
@@ -573,29 +575,86 @@ export class ConversationCoordinator {
   /**
    * Option 5 — Buy or sell.
    *
-   * No marketplace persistence exists, so this journey gathers the details and
-   * routes the user to the supported discovery path instead of fabricating a
-   * listing or transaction.
+   * Interactive buy/sell journey with emoji-rich choices.
    */
   private handleBuySell(turn: IncomingTurn, conversation: RuntimeConversation): { action: CoordinatorAction; reply: string; state: RuntimeState } {
     const request = turn.request!;
-    const category = request.category;
-    const location = request.location;
-    if (category && location?.city) {
-      conversation.lastRequest = request;
-      return {
-        action: "clarify",
-        reply: `I can help you look for ${category} in ${location.city}. Buying and selling directly is not available yet, but I can show you the local businesses that are listed so you can contact them. Is that useful?`,
-        state: "clarification_needed",
-      };
+    const text = turn.text.trim();
+    const lower = text.toLowerCase();
+    const meta = (conversation as any).buySellMeta;
+    
+    if (meta?.mode === "sell") {
+      if (!meta.item) {
+        const item = text.replace(/[?.!,]+$/, "").trim();
+        (conversation as any).buySellMeta = { mode: "sell", item };
+        return {
+          action: "clarify",
+          reply: `Great! 😊 Got it — you want to sell ${item}.\n\n📝 Can you tell me a bit more:\n• 📍 Where are you located (city/area)?\n• 💰 What's your asking price?\n• 📸 Any details you'd like to share (condition, etc.)?\n\nYou can answer what you have for now — I'll guide you from there.`,
+          state: "clarification_needed",
+        };
+      } else {
+        (conversation as any).buySellMeta = undefined;
+        return {
+          action: "answer",
+          reply: `Thanks! I've noted your ${meta.item} for sale. 🛍️\n\nWhile direct marketplace posting isn't fully automated yet, I can help you find interested buyers in your community or connect you to relevant local businesses.\n\nWhat would you like to do next? Just tell me or type MENU to see options.`,
+          state: "ready_for_request",
+        };
+      }
+    } else if (meta?.mode === "buy") {
+      if (!meta.item) {
+        const item = text.replace(/[?.!,]+$/, "").trim();
+        (conversation as any).buySellMeta = { mode: "buy", item };
+        return {
+          action: "clarify",
+          reply: `Got it! 🛒 You're looking to buy ${item}.\n\n📍 Which city/area should I search in?\n💰 Do you have a budget in mind (optional)?\n\nTell me your location and I'll look for matches on TrustHub.`,
+          state: "clarification_needed",
+        };
+      } else {
+        (conversation as any).buySellMeta = undefined;
+        return {
+          action: "answer",
+          reply: `Let me look for ${meta.item} in ${text}. 🔎\n\nI can help you find businesses that might have what you're looking for. Just tell me "find ${meta.item} in [city]" and I'll search for you, or type MENU for other options.`,
+          state: "ready_for_request",
+        };
+      }
     }
-    if (!category) {
-      return { action: "clarify", reply: "Are you looking to buy something, or sell something? What kind of item or service?", state: "clarification_needed" };
+    
+    if (/\bsell\s+my\b/i.test(lower) || /\bi want to sell\b/i.test(lower) || (/\bsell\b/i.test(lower) && !/\bbuy\b/i.test(lower))) {
+      const itemMatch = lower.match(/sell\s+(?:my\s+)?(.+?)(?:\.|$)/i) || lower.match(/want to sell\s+(.+?)(?:\.|$)/i);
+      if (itemMatch && itemMatch[1] && itemMatch[1].trim().length > 2 && !/(something|anything|it)/i.test(itemMatch[1])) {
+        const item = itemMatch[1].trim().replace(/[?.!,]+$/, "");
+        (conversation as any).buySellMeta = { mode: "sell", item };
+        return {
+          action: "clarify",
+          reply: `Great! 😊 Got it — you want to sell ${item}.\n\n📝 Can you tell me a bit more:\n• 📍 Where are you located (city/area)?\n• 💰 What's your asking price?\n• 📸 Any details you'd like to share (condition, etc.)?\n\nYou can answer what you have for now — I'll guide you from there.`,
+          state: "clarification_needed",
+        };
+      }
+      (conversation as any).buySellMeta = { mode: "sell" };
+      return { action: "clarify", reply: `Great! 😊 What would you like to sell?`, state: "clarification_needed" };
     }
-    if (!location?.city) {
-      return { action: "clarify", reply: `Which city should I look in for ${category}?`, state: "clarification_needed" };
+    
+    if (/\bbuy\s+a\b/i.test(lower) || /\bi(?:'m| am) looking to buy\b/i.test(lower) || /\bi want to buy\b/i.test(lower) || (/\bbuy\b/i.test(lower) && !/\bsell\b/i.test(lower))) {
+      const itemMatch = lower.match(/buy\s+(?:a\s+|an\s+)?(.+?)(?:\.|$)/i) || lower.match(/looking to buy\s+(.+?)(?:\.|$)/i) || lower.match(/want to buy\s+(.+?)(?:\.|$)/i);
+      if (itemMatch && itemMatch[1] && itemMatch[1].trim().length > 2 && !/(something|anything|it)/i.test(itemMatch[1])) {
+        const item = itemMatch[1].trim().replace(/[?.!,]+$/, "");
+        (conversation as any).buySellMeta = { mode: "buy", item };
+        return {
+          action: "clarify",
+          reply: `Got it! 🛒 You're looking to buy ${item}.\n\n📍 Which city/area should I search in?\n💰 Do you have a budget in mind (optional)?\n\nTell me your location and I'll look for matches on TrustHub.`,
+          state: "clarification_needed",
+        };
+      }
+      (conversation as any).buySellMeta = { mode: "buy" };
+      return { action: "clarify", reply: `Got it! 🛒 What are you looking to buy?`, state: "clarification_needed" };
     }
-    return { action: "clarify", reply: "What are you looking to buy or sell, and where?", state: "clarification_needed" };
+    
+    conversation.activeJourney = "buy_sell";
+    return {
+      action: "clarify",
+      reply: `🛍️ Buy & Sell\n\nWhat would you like to do?\n\n* 🛒 Buy something\n* 🏷️ Sell something\n* 🔙 Back to the main menu\n\nJust pick one or tell me in your own words!`,
+      state: "clarification_needed",
+    };
   }
 
   /**

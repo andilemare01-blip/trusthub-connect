@@ -249,11 +249,9 @@ export class ConversationCoordinator {
       action = "contribution_recorded";
       reply = "Thanks. I saved this as an unverified community contribution for review. It is not yet a verified listing.";
       nextState = "ready_for_request";
-    } else if (!turn.request && !turn.media?.length && isGreeting(turn.text) && this.library?.greeting(turn.conversationId, conversation.assistantName)) {
+    } else if (!turn.request && !turn.media?.length && isGreeting(turn.text)) {
       action = "clarify";
-      reply = this.library.greeting(turn.conversationId, conversation.assistantName)!.reply;
-      if (priorState === "clarification_needed") reply = `${reply}\n\n${pendingQuestion}`;
-      else reply = `${reply}\n\n${formatServiceBoard()}`;
+      reply = formatServiceBoard();
       nextState = priorState === "clarification_needed" ? priorState : "ready_for_request";
     } else if (continued) {
       conversation.lastRequest = continued;

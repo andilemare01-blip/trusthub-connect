@@ -130,7 +130,7 @@ test("a person without a TrustHub profile is never offered a community request t
 test("the real conversation: Hi, a driving school, Harare returns structured results from the database", async () => {
   const say = chat([row("d1", "Safe Roads Driving School"), row("d2", "Eastlea Driving School", { phone: null, address: null, area: null }), row("p1", "Kudzai Plumbing")]);
   const hello = await say("Hi");
-  assert.match(hello.reply, /I'm [A-Z][a-z]+/);
+  assert.match(hello.reply, /TRUSTHUB CONNECT/);
   const asked = await say("I'm looking for a driving school");
   assert.match(asked.reply, /Which city/);
   const found = await say("Harare");
@@ -495,3 +495,4 @@ test("results from the answer generator never contain the removed yes/no quiz an
   const resolved = await resolver.resolve({ text: "x", intent: "find_business", category: "driving school", location: { country: "Zimbabwe", city: "Harare" }, questionType: "business_discovery" });
   assert.ok(resolved.evidence.every((item) => item.kind === "listing" && item.name && item.verificationStatus !== "verified"));
 });
+

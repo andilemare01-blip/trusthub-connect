@@ -24,7 +24,7 @@ test("guest greeting reaches the normal response path without a linked account",
   });
 
   assert.equal(result.action, "clarify");
-  assert.match(result.reply, new RegExp(`I'm ${result.conversation.assistantName}\\b`));
+  assert.match(result.reply, /TRUSTHUB CONNECT/);
 });
 
 test("answers from TrustHub and preserves provenance and uncertainty", async () => {
@@ -186,10 +186,9 @@ test("MENU shows the Service Board without corrupting an active task", async () 
   assert.equal(started.state, "clarification_needed");
   const shown = await say(coordinator, "menu-active", "MENU", "m2");
   assert.equal(shown.action, "show_menu");
-  assert.match(shown.reply, /Service Board/);
+  assert.match(shown.reply, /TRUSTHUB CONNECT/);
   assert.match(shown.reply, /Find a Business or Service|🔎 Find/);
   assert.match(shown.reply, /Community Intelligence|🧠 Community/);
-  assert.match(shown.reply, /You don't have to choose a number/);
   // The pending request is preserved so the user can still answer it.
   assert.equal((await repository.get("menu-active"))?.lastRequest?.category, "plumber");
   assert.equal((await repository.get("menu-active"))?.state, "clarification_needed");
@@ -200,7 +199,7 @@ test("a bare menu number enters its journey and never overrides an active clarif
   await understood(coordinator, "menu-number", "I need a plumber", "n1");
   const result = await say(coordinator, "menu-number", "1", "n2");
   assert.equal(result.action, "start_journey");
-  assert.match(result.reply, /Service Board/);
+  assert.match(result.reply, /TRUSTHUB CONNECT/);
   assert.match(result.reply, /What would you like to find, and where\?/);
   // The active clarification is preserved; the number did not answer it.
   assert.equal(result.state, "clarification_needed");
@@ -211,7 +210,7 @@ test("a placeholder option gives an honest coming-soon reply instead of a fabric
   const { coordinator } = runtime({ trusthub: source() });
   const result = await say(coordinator, "placeholder", "4", "p1");
   assert.equal(result.action, "placeholder");
-  assert.match(result.reply, /Service Board/);
+  assert.match(result.reply, /TRUSTHUB CONNECT/);
   assert.match(result.reply, /not available yet/);
   assert.doesNotMatch(result.reply, /rating recorded|saved|confirmed/);
 });
@@ -510,3 +509,4 @@ test("a contribution is never treated as verified evidence on a later search", a
   const later = await understood(coordinator, "ev", "plumber in Chiredzi", "e2");
   assert.doesNotMatch(later.reply, /verified listing/);
 });
+

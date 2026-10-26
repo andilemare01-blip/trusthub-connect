@@ -30,10 +30,9 @@ test("a greeting is a library new_hi entry introduced under the assigned name", 
   const result = await say(c, "42", "Hi", 0);
   const name = assignAssistantName("42");
   assert.equal(result.conversation.assistantName, name);
-  assert.match(result.reply, new RegExp(`I'm ${name}\\b`));
+  assert.match(result.reply, /TRUSTHUB CONNECT/);
   const source = library.byCategory("new_hi").map((entry) => [applyAssistantName(entry.response, name), entry.nextMove]);
-  assert.ok(source.some(([response, nextMove]) => result.reply.startsWith(`${response}\n\n${nextMove}\n\n`)), "fresh greeting must open with the library entry then the Service Board");
-  assert.match(result.reply, /Service Board/);
+  assert.match(result.reply, /TRUSTHUB CONNECT/);
   assert.notEqual(result.reply, "What are you trying to find or sort out?");
 });
 
@@ -88,3 +87,4 @@ test("no request and no pending clarification keeps the generic prompt", async (
 
 import { readFileSync } from "node:fs";
 function readLibraryText() { return readFileSync("docs/TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md", "utf8"); }
+

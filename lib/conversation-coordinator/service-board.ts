@@ -140,15 +140,25 @@ export function formatServiceBoard(): string {
     sections.set(option.section, list);
   }
   const blocks: string[] = [];
-  let intro = "Here is the TrustHub Connect Service Board.";
+  const intro = [
+    "TRUSTHUB CONNECT — YOUR TRUSTED COMMUNITY",
+    "",
+    "👋 Hi! I'm your TrustHub Connect assistant. I'm here to help you discover trusted businesses, find services, make better decisions, and connect with your community.",
+    "",
+    "What can I help you with today?",
+  ].join("\\n");
   for (const [section, options] of sections) {
-    blocks.push(`*0${section === SERVICE_BOARD_SECTION_DISCOVER ? "1" : section === SERVICE_BOARD_SECTION_OPPORTUNITY ? "2" : "3"} / ${section.toUpperCase()}*`);
+    const sectionNumber = section === SERVICE_BOARD_SECTION_DISCOVER ? "01" : section === SERVICE_BOARD_SECTION_OPPORTUNITY ? "02" : "03";
+    const sectionEmoji = section === SERVICE_BOARD_SECTION_DISCOVER ? "🔎" : section === SERVICE_BOARD_SECTION_OPPORTUNITY ? "💼" : "🤝";
+    blocks.push(`${sectionEmoji} ${sectionNumber} — ${section}`);
     for (const option of options) {
       blocks.push(`${option.number}. ${option.label}`);
       if (option.description) blocks.push(option.description);
     }
+    blocks.push("");
   }
-  return [intro, ...blocks, "", SERVICE_BOARD_CLOSING].join("\n");
+  const closing = "💬 You can choose an option by sending its number, or simply tell me what you need in your own words.\n\nType MENU whenever you want to see these options again.";
+  return [intro, "", ...blocks, closing].join("\\n");
 }
 
 /** True when the message is the MENU command, case-insensitive and trimmed. */

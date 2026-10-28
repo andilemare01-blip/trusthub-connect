@@ -293,3 +293,13 @@ test("the same WhatsApp message delivered twice saves one review", async () => {
   await journeys.handle("Great", context, state);
   assert.equal(store.reviews.length, 1);
 });
+
+test("button and list messages keep their line breaks", async () => {
+  const { say } = setup();
+  await say("menu.buy_sell");
+  await say("btn.sell");
+  const preview = await say("Samsung A15, $120, Chinhoyi");
+  assert.match(preview.interactive?.body ?? "", /\nItem: \*Samsung A15\*\nPrice: \$120\nWhere: Chinhoyi/);
+  const welcome = await say("Hi");
+  assert.match(welcome.interactive?.body ?? "", /\n\nWhat would you like to do\?$/);
+});

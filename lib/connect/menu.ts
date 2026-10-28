@@ -41,8 +41,15 @@ export const MENU_ROWS: readonly MenuRow[] = [
 export const MENU_BUTTON_TEXT = "Choose an option";
 export const MENU_FOOTER = "Or just type what you need";
 
+/** One line of text (titles, labels): whitespace collapsed, cut with an ellipsis. */
 export function clip(value: string, max: number): string {
   const clean = value.replace(/\s+/g, " ").trim();
+  return clean.length <= max ? clean : `${clean.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+/** A message body: line breaks kept, cut with an ellipsis when it exceeds WhatsApp's limit. */
+export function clipText(value: string, max: number): string {
+  const clean = value.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return clean.length <= max ? clean : `${clean.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
@@ -54,7 +61,7 @@ export function menuInteractive(body: string): WhatsAppInteractiveMessage {
     if (!section) { section = { title: clip(row.section, 24), rows: [] }; sections.push(section); }
     section.rows.push({ id: row.id, title: clip(row.title, 24), description: clip(row.description, 72) });
   }
-  return { type: "list", body: clip(body, 1024), footer: MENU_FOOTER, buttonText: MENU_BUTTON_TEXT, sections };
+  return { type: "list", body: clipText(body, 1024), footer: MENU_FOOTER, buttonText: MENU_BUTTON_TEXT, sections };
 }
 
 /** The same menu as numbered plain text, with real line breaks. */

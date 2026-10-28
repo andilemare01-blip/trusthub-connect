@@ -13,7 +13,7 @@
  * - Unverified data is labelled as such; nothing is invented.
  */
 import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
-import { clip, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
+import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent } from "./store.ts";
 
@@ -51,11 +51,11 @@ const REVIEW_COOLDOWN_DAYS = 30;
 const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "scam.result", "feedback.offer", "add_business.review_existing"]);
 
 function buttons(body: string, items: [id: string, title: string][], footer?: string): WhatsAppInteractiveMessage {
-  return { type: "button", body: clip(body, 1024), buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })), ...(footer ? { footer: clip(footer, 60) } : {}) };
+  return { type: "button", body: clipText(body, 1024), buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })), ...(footer ? { footer: clip(footer, 60) } : {}) };
 }
 
 function list(body: string, buttonText: string, sectionTitle: string, rows: { id: string; title: string; description?: string }[]): WhatsAppInteractiveMessage {
-  return { type: "list", body: clip(body, 1024), buttonText: clip(buttonText, 20), sections: [{ title: clip(sectionTitle, 24), rows: rows.slice(0, 10).map((row) => ({ id: row.id, title: clip(row.title, 24), ...(row.description ? { description: clip(row.description, 72) } : {}) })) }] };
+  return { type: "list", body: clipText(body, 1024), buttonText: clip(buttonText, 20), sections: [{ title: clip(sectionTitle, 24), rows: rows.slice(0, 10).map((row) => ({ id: row.id, title: clip(row.title, 24), ...(row.description ? { description: clip(row.description, 72) } : {}) })) }] };
 }
 
 /** True when the reply is the given button id, its label, or a common typed equivalent. */
@@ -607,7 +607,7 @@ export class ConnectJourneys {
     if (sections.length === 1) sections.push("", `It's early days for ${city}: there aren't enough searches yet this week to show trends. Every search people make helps build this picture.`);
     else sections.push("", `_Based on TrustHub searches and listings in ${city} over the last 7 days._`);
     const reply = sections.join("\n");
-    return { reply, interactive: buttons(clip(reply, 1024), [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state: { flow: "area", step: "shown", data: { city } }, action: "answer" };
+    return { reply, interactive: buttons(reply, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state: { flow: "area", step: "shown", data: { city } }, action: "answer" };
   }
 
   // ------------------------------------------------------------ scam check
@@ -681,8 +681,8 @@ export class ConnectJourneys {
         const body = "I couldn't answer that properly right now, so I didn't use your credit. Please try again later.";
         return { reply: body, interactive: buttons(body, [["btn.menu", "Main menu"]]), state: null, action: "answer" };
       }
-      const reply = `${clip(answer, 1500)}\n\n_From TrustHub data. ${spent.balance} ${spent.balance === 1 ? "credit" : "credits"} left._`;
-      return { reply, interactive: buttons(clip(reply, 1024), [["menu.ask", "Ask another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
+      const reply = `${clipText(answer, 1500)}\n\n_From TrustHub data. ${spent.balance} ${spent.balance === 1 ? "credit" : "credits"} left._`;
+      return { reply, interactive: buttons(reply, [["menu.ask", "Ask another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
     }
     return this.repeat(state);
   }

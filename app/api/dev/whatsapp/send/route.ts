@@ -110,6 +110,9 @@ export async function POST(request: NextRequest) {
       contributionCandidate: understanding.contribution,
       understanding,
       correlationId,
+      identityId: identity.whatsAppIdentity.id,
+      senderPhoneNumber: phone,
+      profileName: identity.profile.name ?? null,
     }, {
       channel: "whatsapp",
       whatsappIdentityId: identity.whatsAppIdentity.id,
@@ -120,6 +123,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       reply: result.reply,
+      interactive: result.interactive ?? null,
       state: result.state,
       action: result.action,
       conversationId: result.conversationId,

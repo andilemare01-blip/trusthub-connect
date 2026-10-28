@@ -22,10 +22,6 @@ export async function GET(request: NextRequest) {
   // Trim and treat blank as unset: a pasted trailing newline/space or an empty
   // primary variable must not defeat the handshake or hide the fallback name.
   const token = process.env.WHATSAPP_VERIFY_TOKEN?.trim() || process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN?.trim() || undefined;
-  console.log("WHATSAPP VERIFY TOKEN CHECK:", {
-  present: Boolean(token),
-  length: token?.length ?? 0,
-});
   const response = handleMetaWebhookVerification(request.nextUrl.searchParams, token);
   response.headers.set("x-request-id", requestId);
   return response;
@@ -120,6 +116,9 @@ export async function POST(request: NextRequest) {
       contributionCandidate: understanding.contribution,
       understanding,
       correlationId: requestId,
+      identityId: context.whatsappIdentityId,
+      senderPhoneNumber: message.senderPhoneNumber,
+      profileName: identity.profile?.name ?? null,
     }, context);
     if (result.duplicate && result.alreadyDelivered) {
       await recordOperationalEvent(client, { kind: "duplicate_webhook", sourceId: `${message.providerMessageId}:${requestId}`, correlationId: result.conversationId, actor: "provider" });
@@ -127,7 +126,7 @@ export async function POST(request: NextRequest) {
     }
     let delivery;
     try {
-      delivery = await provider.sendMessage({ toPhoneNumber: message.senderPhoneNumber, text: result.reply, correlationId: requestId, interactive: (result as any).interactive });
+      delivery = await provider.sendMessage({ toPhoneNumber: message.senderPhoneNumber, text: result.reply, correlationId: requestId, interactive: result.interactive });
     } catch (error) {
       await recordOperationalEvent(client, { kind: "outbound_failed", sourceId: requestId, correlationId: result.conversationId, actor: "provider", attributes: { detail: error instanceof Error ? error.message.slice(0, 100) : "unknown" } });
       throw error;

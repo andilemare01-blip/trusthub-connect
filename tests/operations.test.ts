@@ -130,7 +130,7 @@ test("a person without a TrustHub profile is never offered a community request t
 test("the real conversation: Hi, a driving school, Harare returns structured results from the database", async () => {
   const say = chat([row("d1", "Safe Roads Driving School"), row("d2", "Eastlea Driving School", { phone: null, address: null, area: null }), row("p1", "Kudzai Plumbing")]);
   const hello = await say("Hi");
-  assert.match(hello.reply, /TRUSTHUB CONNECT/);
+  assert.match(hello.reply, /What would you like to do\?/);
   const asked = await say("I'm looking for a driving school");
   assert.match(asked.reply, /Which city/);
   const found = await say("Harare");
@@ -143,7 +143,7 @@ test("the real conversation: Hi, a driving school, Harare returns structured res
   assert.doesNotMatch(found.reply, /Kudzai|Reply Yes or No|verified by TrustHub/);
   const eastlea = found.reply.split("\n\n").find((part) => part.includes("Eastlea"))!;
   assert.doesNotMatch(eastlea, /Phone|Address/);
-  assert.match(found.reply, /If one of these works out, let me know/);
+  assert.match(found.reply, /Did one of these work out\?/);
 });
 
 test("ordinary language is understood, and a no-luck reply records an honest outcome without a yes/no quiz", async () => {

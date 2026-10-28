@@ -108,7 +108,7 @@ test("end to end over persistence: Harare, then a driving school, continues acro
     return coordinator.handleTurn({ conversationId: id, channel: "whatsapp", text, request: understanding.request ?? undefined, understanding, providerMessageId: `wamid.e2e-${n}` });
   };
   const hi = await turn("Hi", 0);
-  assert.match(hi.reply, /TRUSTHUB CONNECT/);
+  assert.match(hi.reply, /What would you like to do\?/);
   const place = await turn("Harare", 1);
   assert.equal(place.state, "clarification_needed");
   const category = await turn("a driving school", 2);

@@ -23,6 +23,8 @@ export interface RuntimeConversation {
    * reach the same handler; cleared when the journey finishes or the user
    * starts an unrelated task. */
   activeJourney?: string;
+  /** The guided TrustHub Connect flow in progress (review, listing, scam check...), if any. */
+  connect?: import("../connect/journeys").ConnectJourneyState | null;
   messages: ConversationMessage[];
   transitions: { from: RuntimeState; to: RuntimeState; at: string; reason: string }[];
   updatedAt: string;
@@ -46,6 +48,10 @@ export interface IncomingTurn {
   profileLinked?: boolean;
   /** The sender's E.164 WhatsApp number, when the caller knows it. Profile creation needs it; it is never logged. */
   senderPhoneNumber?: string | null;
+  /** The sender's whatsapp_identities id. The assistant name, credits and saved contributions key off it. */
+  identityId?: string | null;
+  /** The linked TrustHub profile's display name, when there is one. */
+  profileName?: string | null;
   correlationId?: string;
 }
 

@@ -78,7 +78,7 @@ test("a greeting during clarification greets by name, keeps the pending request 
   const first = await say(coordinator, "51", "I need a place to stay", 0);
   const greeted = await say(coordinator, "51", "Hello", 1);
   assert.equal(greeted.state, "clarification_needed");
-  assert.match(greeted.reply, /TRUSTHUB CONNECT/);
+  assert.match(greeted.reply, /What would you like to do\?/);
   assert.equal(greeted.conversation.lastRequest?.category, "accommodation");
   const answered = await say(coordinator, "51", "Harare", 2);
   assert.equal(answered.conversation.lastRequest?.location?.city, "Harare");

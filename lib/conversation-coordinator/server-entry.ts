@@ -25,6 +25,9 @@ import { createAnswerGenerator } from "../answer-resolution/response-generator.t
 import { RuntimeEventSearchTaskLedger } from "../usage/search-tasks.ts";
 import { recordOperationalEvent } from "../observability/operational-events.ts";
 import { diagnosticError, logWhatsAppDiagnostic } from "../whatsapp/diagnostics.ts";
+import { ConnectJourneys } from "../connect/journeys.ts";
+import { SupabaseConnectStore, type ConnectDbClient } from "../connect/supabase-store.ts";
+import { createDeepQuestionAnswerer } from "../connect/ask-wisdom.ts";
 
 export type TrustedTurnContext = StartPersistentConversation;
 
@@ -50,6 +53,14 @@ export async function handlePersistentTrustHubTurn(
     if (exactMatches.length === 1) persistenceContext = { ...trustedContext, communityId: exactMatches[0].id };
   }
   const repository = new SupabaseRuntimeConversationRepository(client, turn.correlationId);
+  // A person in the middle of a guided flow or a menu search stays in that
+  // conversation even when this message names a city; otherwise the city's
+  // own conversation would start and the step they are answering would be lost.
+  if (persistenceContext.whatsappIdentityId && !persistenceContext.reuseLatestOpenConversation) {
+    const latestId = await repository.findLatestOpenConversationId(persistenceContext);
+    const latest = latestId ? await repository.get(latestId) : null;
+    if (latest?.connect || latest?.activeJourney) persistenceContext = { ...persistenceContext, reuseLatestOpenConversation: true };
+  }
   let conversationId: string;
   try {
     conversationId = await repository.findOrStartConversation(persistenceContext);
@@ -69,13 +80,17 @@ export async function handlePersistentTrustHubTurn(
   const answerGenerator = aiStatus.enabled && turn.providerMessageId
     ? new AiAnswerGenerator(createAnswerGenerator(), new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client)), turn.providerMessageId)
     : undefined;
+  const connectStore = new SupabaseConnectStore(client as unknown as ConnectDbClient);
+  const deepAnswerer = aiStatus.enabled ? createDeepQuestionAnswerer(new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client)), connectStore) : undefined;
+  const connect = { store: connectStore, journeys: new ConnectJourneys(connectStore, deepAnswerer) };
   try {
-    result = await createConversationRuntime({ trustHubClient, repository, knowledgeRecordReader, contributionReader: new SupabaseContributionRepository(client), answerGenerator }).handleTurn({
+    result = await createConversationRuntime({ trustHubClient, repository, knowledgeRecordReader, contributionReader: new SupabaseContributionRepository(client), answerGenerator, connect }).handleTurn({
       ...turn,
       contributionCandidate,
       conversationId,
       channel: persistenceContext.channel,
       profileLinked: !!persistenceContext.profileId,
+      identityId: turn.identityId ?? persistenceContext.whatsappIdentityId,
     });
   } catch (error) {
     if (turn.correlationId) logWhatsAppDiagnostic(turn.correlationId, "conversation_coordinator_completed", { outcome: "failed", ...diagnosticError(error), durationMs: Date.now() - startedAt });
@@ -107,8 +122,10 @@ export async function handlePersistentTrustHubTurn(
   const alreadyDelivered = inboundIndex >= 0 && duplicate!.messages.slice(inboundIndex + 1)
     .some((message) => message.direction === "outbound" && !!message.providerMessageId);
   let contributionId: string | null = null;
-  if (contributionCandidate && turn.providerMessageId) {
-    if (!persistenceContext.profileId) throw new Error("Cannot persist a contribution without a canonical TrustHub profile.");
+  // Only a reply that told the person their tip was saved may save it. A guest's
+  // tip goes through "add a business" instead, because contributions need a profile;
+  // throwing here used to leave guests with no reply at all.
+  if (contributionCandidate && turn.providerMessageId && result.action === "contribution_recorded" && persistenceContext.profileId) {
     const sourceMessageId = await repository.getDatabaseMessageIdByProviderMessageId(turn.providerMessageId);
     if (!sourceMessageId) throw new Error("Cannot persist a contribution without its stored source message.");
     contributionId = await new SupabaseContributionRepository(client).recordDetectedContribution({

@@ -13,6 +13,7 @@ interface Result { data: Row | Row[] | null; error: { message: string; code?: st
 export interface ConnectQuery extends PromiseLike<Result> {
   select(columns?: string, options?: { count?: "exact"; head?: boolean }): ConnectQuery;
   insert(values: Row | Row[]): ConnectQuery;
+  update(values: Row): ConnectQuery;
   eq(column: string, value: unknown): ConnectQuery;
   neq(column: string, value: unknown): ConnectQuery;
   in(column: string, values: readonly unknown[]): ConnectQuery;

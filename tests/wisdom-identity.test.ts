@@ -30,9 +30,9 @@ test("a greeting is a library new_hi entry introduced under the assigned name", 
   const result = await say(c, "42", "Hi", 0);
   const name = assignAssistantName("42");
   assert.equal(result.conversation.assistantName, name);
-  assert.match(result.reply, /TRUSTHUB CONNECT/);
+  assert.match(result.reply, /What would you like to do\?/);
   const source = library.byCategory("new_hi").map((entry) => [applyAssistantName(entry.response, name), entry.nextMove]);
-  assert.match(result.reply, /TRUSTHUB CONNECT/);
+  assert.match(result.reply, /What would you like to do\?/);
   assert.notEqual(result.reply, "What are you trying to find or sort out?");
 });
 
@@ -79,10 +79,11 @@ test("a bare city reply and a repeated greeting keep the same request and name",
   assert.equal(answered.conversation.assistantName, opening.conversation.assistantName);
 });
 
-test("no request and no pending clarification keeps the generic prompt", async () => {
+test("a message that is not a request gets a short example and the tappable menu", async () => {
   const { coordinator: c } = coordinator();
   const result = await say(c, "13", "What time is it?", 0);
-  assert.equal(result.reply, "What are you trying to find or sort out?");
+  assert.match(result.reply, /plumber in Harare/);
+  assert.equal(result.interactive?.type, "list");
 });
 
 import { readFileSync } from "node:fs";

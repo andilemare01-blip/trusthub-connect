@@ -1,6 +1,6 @@
 import { createTrustHubAnswerResolver } from "../answer-resolution/factory.ts";
 import type { TrustHubClient } from "../trusthub/client";
-import { ConversationCoordinator, type CityValidator } from "./coordinator.ts";
+import { ConversationCoordinator, type CityValidator, type CoordinatorConnectOptions } from "./coordinator.ts";
 import { InMemoryRuntimeConversationRepository } from "./repository.ts";
 import type { RuntimeConversationRepository } from "./repository";
 import type { AnswerGenerator } from "@/types/answer";
@@ -20,6 +20,8 @@ export interface ConversationRuntimeOptions {
   answerGenerator?: AnswerGenerator;
   /** Optional profile-creation seam. Omit it and an explicit "create my profile" request throws. */
   provisioner?: IdentityProvisioner;
+  /** The guided Connect journeys and their store. Omit it and an in-memory store is used (tests, local harness). */
+  connect?: CoordinatorConnectOptions;
 }
 
 /** Local composition seam: coordinator and resolver remain separately replaceable modules. */
@@ -38,6 +40,6 @@ export function createConversationRuntime(options: ConversationRuntimeOptions) {
       return listed.some((business) => (business.city ?? "").trim().toLocaleLowerCase() === wanted);
     } catch { return false; }
   };
-  const coordinator = new ConversationCoordinator(repository, resolver, now, options.answerGenerator, undefined, cityValidator, options.provisioner);
+  const coordinator = new ConversationCoordinator(repository, resolver, now, options.answerGenerator, undefined, cityValidator, options.provisioner, options.connect);
   return { coordinator, resolver, repository, handleTurn: (turn: IncomingTurn) => coordinator.handleTurn(turn) };
 }

@@ -128,7 +128,7 @@ test("every delivered answer ends with the explicit outcome-confirmation questio
   const answer = await coordinator.handleTurn({ conversationId: CONVERSATION_ID, channel: "whatsapp", text: discoveryRequest.text, request: discoveryRequest, providerMessageId: "wamid.request" });
   assert.equal(answer.state, "answer_found");
   assert.equal(answer.outcomeConfirmation, null, "the answer itself must never record an outcome");
-  assert.match(answer.reply, /If one of these works out, let me know/);
+  assert.match(answer.reply, /Did one of these work out\?/);
 });
 
 test("a helpful confirmation records one outcome and closes the matched request", async () => {

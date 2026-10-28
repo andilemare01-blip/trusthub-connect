@@ -9,8 +9,11 @@ interface Evidence {
   confidence: string;
   claim: string;
 }
+interface InteractiveOption { id: string; title: string; description?: string }
+interface Interactive { type: "button" | "list"; body?: string; buttonText?: string; buttons?: InteractiveOption[]; sections?: { title?: string; rows: InteractiveOption[] }[] }
 interface TurnResult {
   reply: string;
+  interactive: Interactive | null;
   state: string;
   action: string;
   conversationId: string;
@@ -24,7 +27,7 @@ interface TurnResult {
   understanding: { answerability: string; urgency: string; escalation: string; aiProviderStatus: string; category: string | null; city: string | null };
   resolution: { status: string; confidence: string; uncertainty: string | null; nextAction: string; evidence: Evidence[]; sourceAttempts: { source: string; status: string }[] } | null;
 }
-interface Bubble { id: string; from: "user" | "trusthub"; text: string; meta?: string; evidence?: Evidence[] }
+interface Bubble { id: string; from: "user" | "trusthub"; text: string; meta?: string; evidence?: Evidence[]; options?: InteractiveOption[]; listLabel?: string }
 
 const panel: React.CSSProperties = { fontFamily: "system-ui, sans-serif", maxWidth: 760, margin: "0 auto", padding: 24 };
 const input: React.CSSProperties = { padding: 10, borderRadius: 6, border: "1px solid #ccc", fontSize: 14, boxSizing: "border-box" };
@@ -54,11 +57,15 @@ export default function Simulator() {
 
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    const message = text.trim();
+    await deliver(text.trim());
+  }
+
+  /** Sends typed text, or a tapped button/list row: the id goes to the server, the label shows in the chat, as on WhatsApp. */
+  async function deliver(message: string, label?: string) {
     if (!message || pending) return;
     setPending(true);
     setError(null);
-    setBubbles((current) => [...current, { id: `u-${Date.now()}`, from: "user", text: message }]);
+    setBubbles((current) => [...current, { id: `u-${Date.now()}`, from: "user", text: label ?? message }]);
     setText("");
 
     const outcome = await call({ text: message });
@@ -72,9 +79,11 @@ export default function Simulator() {
     setBubbles((current) => [...current, {
       id: `t-${turn.conversationId}-${Date.now()}`,
       from: "trusthub",
-      text: turn.reply,
+      text: turn.interactive?.body ?? turn.reply,
       meta: `${turn.state} / ${turn.action}${turn.testIdentity ? " / test identity" : ""}`,
       evidence: turn.resolution?.evidence,
+      options: turn.interactive?.type === "button" ? turn.interactive.buttons : turn.interactive?.sections?.flatMap((section) => section.rows),
+      listLabel: turn.interactive?.type === "list" ? turn.interactive.buttonText : undefined,
     }]);
     setPending(false);
   }
@@ -123,6 +132,18 @@ export default function Simulator() {
               {bubble.text}
               {bubble.meta && <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>{bubble.meta}</div>}
             </div>
+            {bubble.options && bubble.options.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, maxWidth: "85%" }}>
+                {bubble.listLabel && <div style={{ width: "100%", fontSize: 11, color: "#888" }}>{bubble.listLabel}:</div>}
+                {bubble.options.map((option: InteractiveOption) => (
+                  <button key={option.id} type="button" disabled={pending} title={option.description}
+                    onClick={() => deliver(option.id, option.title)}
+                    style={{ padding: "6px 10px", borderRadius: 16, border: "1px solid #25D366", background: "#fff", color: "#128C7E", fontSize: 13, cursor: "pointer" }}>
+                    {option.title}
+                  </button>
+                ))}
+              </div>
+            )}
             {bubble.evidence && bubble.evidence.length > 0 && (
               <ul style={{ fontSize: 12, color: "#555", margin: "4px 0 0 16px" }}>
                 {bubble.evidence.map((item, index) => (

@@ -30,7 +30,15 @@ interface StoredSnapshot {
   lastAction?: RuntimeConversation["lastAction"];
   assistantName?: string;
   activeTask?: RuntimeConversation["activeTask"];
+  activeJourney?: string;
+  connect?: RuntimeConversation["connect"];
   transitions?: RuntimeConversation["transitions"];
+}
+
+function isConnectState(value: unknown): value is NonNullable<RuntimeConversation["connect"]> {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { flow?: unknown; step?: unknown; data?: unknown };
+  return typeof candidate.flow === "string" && typeof candidate.step === "string" && !!candidate.data && typeof candidate.data === "object" && !Array.isArray(candidate.data);
 }
 
 function metadataRecord(value: unknown): SupabaseRow {
@@ -52,7 +60,10 @@ function snapshotOf(conversation: RuntimeConversation): StoredSnapshot {
     lastAction: conversation.lastAction,
     ...(conversation.assistantName ? { assistantName: conversation.assistantName } : {}),
     ...(conversation.activeTask ? { activeTask: conversation.activeTask } : {}),
-    transitions: conversation.transitions,
+    // Without these the next message forgets which menu journey or flow step it answers.
+    ...(conversation.activeJourney ? { activeJourney: conversation.activeJourney } : {}),
+    connect: conversation.connect ?? null,
+    transitions: conversation.transitions.slice(-20),
   };
 }
 
@@ -105,6 +116,13 @@ export class SupabaseRuntimeConversationRepository implements RuntimeConversatio
     }
     const row = requireData<{ id: unknown }>(insert, "Create conversation");
     return String(row.id);
+  }
+
+  /** The person's most recent open conversation on this channel, in any community. */
+  async findLatestOpenConversationId(input: StartPersistentConversation): Promise<string | null> {
+    if (!input.whatsappIdentityId) return null;
+    const rows = requireRows<{ id: unknown }>(await this.findOpenConversation(input, false), "Find latest open conversation");
+    return rows[0] ? String(rows[0].id) : null;
   }
 
   async findOrStartConversation(input: StartPersistentConversation): Promise<string> {
@@ -162,6 +180,8 @@ export class SupabaseRuntimeConversationRepository implements RuntimeConversatio
       lastAction: snapshot.lastAction ?? null,
       ...(isAssistantName(snapshot.assistantName) ? { assistantName: snapshot.assistantName } : {}),
       ...(snapshot.activeTask && typeof snapshot.activeTask.seq === "number" ? { activeTask: { seq: snapshot.activeTask.seq, completed: snapshot.activeTask.completed === true } } : {}),
+      ...(typeof snapshot.activeJourney === "string" ? { activeJourney: snapshot.activeJourney } : {}),
+      connect: isConnectState(snapshot.connect) ? snapshot.connect : null,
       messages: mappedMessages,
       transitions: snapshot.transitions ?? [],
       updatedAt: stringValue(row.last_message_at, stringValue(row.started_at)),

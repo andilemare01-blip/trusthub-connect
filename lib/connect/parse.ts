@@ -115,9 +115,21 @@ export function listingTitle(text: string): string {
   let title = price ? text.replace(price.priceText, " ") : text;
   const place = parsePlace(text);
   for (const value of [place.area, place.city]) if (value) title = title.replace(new RegExp(`\\b(?:in|at|around|near)?\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i"), " ");
+  // Openers people type before the item: "It's an", "I have a", "I'm selling".
+  title = title.replace(/^\s*(?:(?:it'?s|its|it is|i have|i've got|we have)\s+(?:an?|the|some)?\s*)/i, "")
+    .replace(/\b(?:a|an|per|each|every)\s+(?:month|week|day|year)\b/gi, " ")
+    .replace(/\bi\s*(phone|pad|mac)\b/gi, (_, word: string) => `i${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`)
+    .replace(/\bfor sale\b/gi, " ")
+    .replace(/\b(\w+(?:\s+\w+)?)\s+\1\b/gi, "$1")
+    .replace(/(?:\s+(?:and|its|it's|it is|that|which|is|the|a|an))+\s*$/i, "");
   title = title.replace(/^\s*(?:i(?:'m| am)?\s+)?(?:selling|sell|for sale|looking for|need|want|buying)\s*:?\s*/i, "")
     .replace(/\b(?:under|below|budget|max|maximum|for|around|about|at)\s*(?=[,;]|$)/gi, " ")
     .replace(/^\s*(?:a|an|the|some)\s+/i, "")
     .replace(/\s*[,;]\s*(?=[,;]|$)/g, "").replace(/\s+/g, " ").replace(/^[,;\s-]+|[,;\s-]+$/g, "").trim();
-  return title.length ? title.charAt(0).toUpperCase() + title.slice(1, 80) : "Item";
+  // Filler left behind by punctuation, e.g. "Iphone 12 and its, , ".
+  title = title.replace(/(?:[\s,;-]+(?:and|its|it's|it is|that|which|is|the|a|an))+[\s,;-]*$/i, "").replace(/[\s,;-]+$/g, "");
+  if (!title.length) return "Item";
+  // Apple names keep their own capitals: iPhone, iPad, iMac.
+  const cased = title.charAt(0).toUpperCase() + title.slice(1, 80);
+  return cased.replace(/^I(Phone|Pad|Mac)\b/, "i$1");
 }

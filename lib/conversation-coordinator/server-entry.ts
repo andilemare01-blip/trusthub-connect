@@ -18,7 +18,7 @@ import { SupabaseRuntimeEventRecorder } from "../observability/supabase-recorder
 import { createRuntimeEventId } from "../observability/events";
 import { resolveCommunityFromPendingRequest } from "./community-follow-up.ts";
 import { readAiConfig } from "../ai/config.ts";
-import { AiGateway } from "../ai/gateway.ts";
+import { AiGateway, type AiAttemptFailure } from "../ai/gateway.ts";
 import { AiAnswerGenerator } from "../ai/answer-generator.ts";
 import { RuntimeEventAiSpendLedger } from "../ai/spend-ledger.ts";
 import { createAnswerGenerator } from "../answer-resolution/response-generator.ts";
@@ -77,11 +77,22 @@ export async function handlePersistentTrustHubTurn(
   }  const duplicate = turn.providerMessageId ? await repository.getByProviderMessageId(turn.providerMessageId) : null;
   let result;
   const aiStatus = readAiConfig();
+  if (!aiStatus.enabled) console.log(JSON.stringify({ event: "ai.disabled", reason: aiStatus.reason }));
+  // Every failed provider attempt is recorded with its reason, so an outage or a retired model is visible in the database.
+  const aiFailures = (failure: AiAttemptFailure) => {
+    const recorder = new SupabaseRuntimeEventRecorder(client);
+    const occurredAt = new Date().toISOString();
+    return recorder.record({
+      id: createRuntimeEventId("ai_call_failed", `${occurredAt}:${failure.model}:${failure.reason}:${Math.random()}`),
+      name: "ai_call_failed", occurredAt, correlationId: "ai-failure", actor: "provider", entityType: "conversation", entityId: failure.model.slice(0, 100),
+      attributes: { reason: failure.reason, model: failure.model.slice(0, 100), providerStatus: failure.providerStatus ?? null, providerMessage: failure.providerMessage?.slice(0, 200) ?? null },
+    }).catch(() => undefined);
+  };
   const answerGenerator = aiStatus.enabled && turn.providerMessageId
-    ? new AiAnswerGenerator(createAnswerGenerator(), new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client)), turn.providerMessageId)
+    ? new AiAnswerGenerator(createAnswerGenerator(), new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client), undefined, undefined, aiFailures), turn.providerMessageId)
     : undefined;
   const connectStore = new SupabaseConnectStore(client as unknown as ConnectDbClient);
-  const deepAnswerer = aiStatus.enabled ? createDeepQuestionAnswerer(new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client)), connectStore) : undefined;
+  const deepAnswerer = aiStatus.enabled ? createDeepQuestionAnswerer(new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client), undefined, undefined, aiFailures), connectStore) : undefined;
   const connect = { store: connectStore, journeys: new ConnectJourneys(connectStore, deepAnswerer) };
   try {
     result = await createConversationRuntime({ trustHubClient, repository, knowledgeRecordReader, contributionReader: new SupabaseContributionRepository(client), answerGenerator, connect }).handleTurn({

@@ -5,6 +5,8 @@ export interface AiConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** Models tried in order when the chosen one is unavailable (retired, rate-limited or unreachable). Starts with `model`. */
+  models: string[];
   /** USD per one million tokens, from the provider's published price list for the configured model. */
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
@@ -28,6 +30,18 @@ export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 /** A currently available free OpenRouter model used when AI_PROVIDER_MODEL is not set. Free models rotate; this is a fallback, not a guarantee. */
 export const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
+
+/**
+ * Tried after the configured model when it fails for a reason another model
+ * may not share (retired model, rate limit, provider outage). Free models come
+ * and go on OpenRouter, so this list is a starting point to verify, not a promise.
+ * Set AI_PROVIDER_MODEL to a cheap paid model for reliable answers.
+ */
+export const FALLBACK_OPENROUTER_MODELS = [
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "google/gemma-3-27b-it:free",
+  "openai/gpt-oss-20b:free",
+];
 
 function positive(value: string | undefined): number | null {
   const parsed = Number(value);
@@ -59,13 +73,15 @@ export function readAiConfig(env: Record<string, string | undefined> = process.e
   const inputUsdPerMillion = nonNegative(env.AI_PROVIDER_INPUT_USD_PER_MILLION_TOKENS ?? env.OPENROUTER_INPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_INPUT_USD_PER_MILLION));
   const outputUsdPerMillion = nonNegative(env.AI_PROVIDER_OUTPUT_USD_PER_MILLION_TOKENS ?? env.OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS ?? String(FREE_MODEL_OUTPUT_USD_PER_MILLION));
   if (inputUsdPerMillion === null || outputUsdPerMillion === null) return { enabled: false, reason: "unknown_pricing" };
+  const extra = (env.AI_PROVIDER_FALLBACK_MODELS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+  const models = [...new Set([model, ...extra, ...FALLBACK_OPENROUTER_MODELS])].slice(0, 6);
   const baseUrl = ((env.AI_PROVIDER_BASE_URL?.trim() ?? env.OPENROUTER_BASE_URL?.trim()) || DEFAULT_OPENROUTER_BASE_URL).replace(/\/+$/, "");
   if (!/^https:\/\//.test(baseUrl)) return { enabled: false, reason: "insecure_base_url" };
   const limitUsd = positive(env.AI_SPEND_LIMIT_USD) ?? DEFAULT_AI_SPEND_LIMIT_USD;
   return {
     enabled: true,
     config: {
-      apiKey, baseUrl, model, inputUsdPerMillion, outputUsdPerMillion,
+      apiKey, baseUrl, model, models, inputUsdPerMillion, outputUsdPerMillion,
       spendLimitMicroUsd: Math.round(limitUsd * 1_000_000),
       maxInputTokens: Math.min(positive(env.AI_MAX_INPUT_TOKENS) ?? 1200, 8000),
       maxOutputTokens: Math.min(positive(env.AI_MAX_OUTPUT_TOKENS) ?? 300, 1500),

@@ -12,6 +12,7 @@ const EVENT_NAMES = new Set<TrustHubRuntimeEvent["name"]>([
   "webhook_authenticated", "inbound_normalized", "identity_resolved", "request_understood",
   "knowledge_lookup", "answer_resolved", "contribution_recorded", "community_help_planned",
   "agent_match_proposed", "handoff_status_changed", "notification_dispatched", "request_outcome_recorded",
+  "ai_call_failed",
 ]);
 const EVENT_ACTORS = new Set<TrustHubRuntimeEvent["actor"]>(["system", "user", "provider", "trust_agent"]);
 const EVENT_ENTITIES = new Set<TrustHubRuntimeEvent["entityType"]>(["conversation", "request", "contribution", "community_help", "agent_assignment", "notification"]);

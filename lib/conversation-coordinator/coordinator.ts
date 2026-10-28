@@ -13,13 +13,47 @@ import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
 import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { ConnectJourneys, type ConnectContext, type ConnectReply } from "../connect/journeys.ts";
 import { InMemoryConnectStore, type ConnectStore } from "../connect/store.ts";
-import { clip, menuInteractive } from "../connect/menu.ts";
+import { clip, clipText, menuInteractive } from "../connect/menu.ts";
 import { parsePlace } from "../connect/parse.ts";
+import { unclearLine } from "../connect/persona.ts";
+import { suggestRoutes, type RouteSuggestion } from "../connect/intent-classifier.ts";
+import type { ConnectRoute } from "../connect/intent-routes.ts";
+
+/** The journey a suggested route opens, as a menu row or a button. */
+const ROUTE_ACTION: Record<ConnectRoute, [id: string, label: string] | null> = {
+  search: ["menu.find", "Find a business"],
+  buy: ["menu.buy_sell", "Buy or sell"],
+  sell: ["menu.buy_sell", "Sell something"],
+  jobs: ["menu.jobs", "Jobs"],
+  houses: ["menu.houses", "Houses & rentals"],
+  read_reviews: ["menu.review", "Read reviews"],
+  write_review: ["menu.review", "Write a review"],
+  add_business: ["menu.add_business", "Add a business"],
+  scam: ["menu.scam", "Scam check"],
+  feedback: ["menu.profile", "Send feedback"],
+  menu: null,
+  social: null,
+  community: null,
+};
+
+/**
+ * The reply when nothing matched: a witty apology, plus up to three likely
+ * journeys as tappable choices. A tap is a confirmed intent, which is the
+ * labelled data the team reviews to improve the rules.
+ */
+function unclearReply(assistantName: string, text: string): { reply: string; interactive: WhatsAppInteractiveMessage } {
+  const suggestions: RouteSuggestion[] = suggestRoutes(text);
+  const choices = suggestions.map((item) => ROUTE_ACTION[item.route]).filter((item): item is [string, string] => item !== null);
+  const seen = new Set<string>();
+  const unique = choices.filter(([id]) => (seen.has(id) ? false : (seen.add(id), true)));
+  const body = unique.length ? `${unclearLine(assistantName)}\n\nDid you mean one of these?` : unclearLine(assistantName);
+  const buttonItems: [string, string][] = [...unique.slice(0, 2), ["btn.menu", "Main menu"]];
+  return { reply: body, interactive: { type: "button", body: clipText(body, 1024), buttons: buttonItems.map(([id, title]) => ({ id, title: clip(title, 20) })) } };
+}
 
 const NON_ANSWER = /^(?:thanks?(?: you)?|thank u|ok(?:ay)?|yes|yeah|yep|no|nope|sure|cool|alright|fine|good|please|nothing|never ?mind|not now|hi|hello|hey)$/i;
 const CITY_QUESTION = "Which city should I look in? An area is optional.";
 const CATEGORY_QUESTION = "What type of business or service are you looking for?";
-const FALLBACK = "I'm not sure what you need yet. You can type something like *plumber in Harare*, or open the menu.";
 
 /** True when the place name resolves to a known location; supplied by the runtime from TrustHub communities. */
 export type CityValidator = (city: string, country: string | null) => Promise<boolean>;
@@ -299,8 +333,9 @@ export class ConversationCoordinator {
         reply = `I received your ${turn.media.map((item) => item.kind === "voice" ? "voice note" : item.kind).join(" and ")}, but I can't read media yet. Please type what you need.`;
         nextState = "clarification_needed";
       } else {
-        reply = FALLBACK;
-        interactive = menuInteractive(FALLBACK);
+        const fallback = unclearReply(conversation.assistantName ?? "Wisdom", turn.text ?? "");
+        reply = fallback.reply;
+        interactive = fallback.interactive;
         nextState = "ready_for_request";
       }
     } else {

@@ -204,5 +204,10 @@ class RetryingQuery implements SupabaseQuery {
  * keep the original single attempt and report their cause instead.
  */
 export function createResilientDataClient(client: SupabaseDataClient): SupabaseDataClient {
-  return { from: (table: string) => new RetryingQuery(client.from(table), true) };
+  const rpc = client.rpc;
+  return {
+    from: (table: string) => new RetryingQuery(client.from(table), true),
+    // Database functions pass straight through: Benita's reads are safe to fail and its callers fall back.
+    ...(rpc ? { rpc: (fn: string, args: Record<string, unknown>) => rpc.call(client, fn, args) } : {}),
+  };
 }

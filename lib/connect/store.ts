@@ -1,3 +1,5 @@
+import type { BenitaFact, BenitaQuery, BenitaResult } from "../benita/index.ts";
+
 /**
  * Storage seam for TrustHub Connect journeys. Journeys depend only on this
  * interface; production uses the Supabase implementation and tests use the
@@ -87,6 +89,8 @@ export interface Listing {
   phone: string | null;
   status: "pending" | "approved" | "rejected" | "needs_review" | "expired";
   createdAt: string;
+  /** Set when Benita collected the listing from a public website rather than a WhatsApp post. */
+  sourceUrl?: string | null;
 }
 
 export interface ListingQuery {
@@ -166,6 +170,10 @@ export interface ConnectStore {
   addCredits(identityId: string, delta: number, reason: CreditReason, reference: string): Promise<{ balance: number; added: boolean }>;
   creditBalance(identityId: string): Promise<number>;
   activity(identityId: string): Promise<IdentityActivity>;
+  /** Benita: one ranked search over every place, provider and listing, each with its trust tier. */
+  benitaSearch(query: BenitaQuery): Promise<BenitaResult[]>;
+  /** Benita: the latest public facts (fuel ceilings, exchange rates), optionally by key prefix. */
+  currentFacts(prefix?: string | null): Promise<BenitaFact[]>;
 }
 
 function median(values: number[]): number {
@@ -280,6 +288,18 @@ export class InMemoryConnectStore implements ConnectStore {
   async creditBalance(identityId: string) {
     return this.credits.filter((entry) => entry.identityId === identityId).reduce((sum, entry) => sum + entry.delta, 0);
   }
+  benitaResults: BenitaResult[] = [];
+  facts: BenitaFact[] = [];
+  async benitaSearch(query: BenitaQuery) {
+    const words = query.text.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 3);
+    return this.benitaResults.filter((result) => {
+      if (query.city && lower(result.city) !== lower(query.city) && lower(result.area) !== lower(query.city)) return false;
+      if (query.kinds && !query.kinds.includes(result.kind)) return false;
+      const haystack = lower(`${result.name} ${result.category ?? ""} ${result.subcategory ?? ""}`);
+      return words.some((word) => haystack.includes(word));
+    }).slice(0, query.limit ?? 5);
+  }
+  async currentFacts(prefix: string | null = null) { return this.facts.filter((fact) => !prefix || fact.key.startsWith(prefix)); }
   async activity(identityId: string) {
     return {
       reviews: this.reviews.filter((review) => review.identityId === identityId).length,

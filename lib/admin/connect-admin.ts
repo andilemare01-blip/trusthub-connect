@@ -99,6 +99,8 @@ export async function connectMetrics(db: ConnectDbClient, since: string) {
     db.from("whatsapp_identities").select("id").limit(100000),
   ]);
 
+  // Benita's own counters; a missing function never breaks the rest of the overview.
+  const benitaRaw = db.rpc ? await db.rpc("benita_stats", {}).then((result) => (result.error ? null : result.data as Row | null), () => null) : null;
   const searchRows = rows(searches, "Read searches");
   const journeys = new Map<string, number>();
   const categories = new Map<string, number>();
@@ -173,6 +175,23 @@ export async function connectMetrics(db: ConnectDbClient, since: string) {
       costPerDeepQuestionUsd: deepCalls ? Math.round(aiRows.filter((row) => (row.attributes as Row).purpose === "deep_question").reduce((total, row) => total + (Number((row.attributes as Row).costMicroUsd) || 0), 0) / deepCalls / 10_000) / 100 : null,
     },
     assistantNames: [...names].map(([name, users]) => ({ name, users })).sort((a, b) => b.users - a.users),
+    benita: benitaSummary(benitaRaw),
+  };
+}
+
+/** Benita's knowledge pile in the shape the overview draws: biggest first, with the latest collection runs. */
+function benitaSummary(raw: Row | null) {
+  if (!raw) return null;
+  const pairs = (value: unknown) => Object.entries((value ?? {}) as Record<string, number>).map(([label, total]) => ({ label, total: Number(total) || 0 })).sort((a, b) => b.total - a.total);
+  const jobs = Array.isArray(raw.last_jobs) ? raw.last_jobs as Row[] : [];
+  return {
+    recordsBySource: pairs(raw.records_by_source),
+    recordsByCity: pairs(raw.records_by_city).slice(0, 10),
+    webListings: Number(raw.web_listings) || 0,
+    whatsappListings: Number(raw.whatsapp_listings) || 0,
+    facts: Number(raw.facts) || 0,
+    queue: pairs(raw.queue),
+    lastJobs: jobs.map((job) => ({ source: String(job.source_key ?? ""), status: String(job.status ?? ""), accepted: Number(job.records_accepted) || 0, at: String(job.created_at ?? ""), error: typeof job.error_message === "string" ? job.error_message.slice(0, 120) : null })),
   };
 }
 

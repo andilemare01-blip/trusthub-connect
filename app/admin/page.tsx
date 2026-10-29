@@ -17,6 +17,11 @@ interface Metrics {
   credits: { welcomeGranted: number; earned: number; spentOnDeepQuestions: number; refundsAndAdjustments: number; unused: number; spentInRange: number };
   ai: { callsInRange: number; deepQuestionsInRange: number; costUsdInRange: number; costPerDeepQuestionUsd: number | null };
   assistantNames: { name: string; users: number }[];
+  benita: {
+    recordsBySource: { label: string; total: number }[]; recordsByCity: { label: string; total: number }[];
+    webListings: number; whatsappListings: number; facts: number; queue: { label: string; total: number }[];
+    lastJobs: { source: string; status: string; accepted: number; at: string; error: string | null }[];
+  } | null;
 }
 interface QueueItem { id: string; title: string; detail: string; tags: string[]; status: string; createdAt: string }
 interface Card { id: string; code: string; status: "active" | "paused" | "unassigned"; businessName: string | null; businessPlace: string | null; taps: number; reviews: number; newUsers: number; links: { nfc: string; qr: string } }
@@ -207,6 +212,7 @@ function Overview({ metrics, range, setRange }: { metrics: Metrics | null; range
               <p className={styles.muted}>Add these businesses first</p>
               {metrics.activity.notFound.length ? metrics.activity.notFound.map((item) => <Line key={`${item.category}-${item.city}`} label={`${item.category} · ${item.city}`} value={`${item.total}×`} />) : <p className={styles.empty}>Nothing yet. This fills up as people search.</p>}
             </section>
+            {metrics.benita ? <BenitaPanel benita={metrics.benita} /> : null}
             <section className={styles.panel} style={{ flex: "1 1 240px" }}>
               <h2>Assistant names</h2>
               <p className={styles.muted}>Each person always meets the same name</p>
@@ -216,6 +222,21 @@ function Overview({ metrics, range, setRange }: { metrics: Metrics | null; range
         </>
       )}
     </>
+  );
+}
+
+/** What Benita knows and what it collected last: the pile that fuels every answer. */
+function BenitaPanel({ benita }: { benita: NonNullable<Metrics["benita"]> }) {
+  const places = benita.recordsBySource.reduce((sum, item) => sum + item.total, 0);
+  const pending = benita.queue.filter((item) => item.label.endsWith(":pending")).reduce((sum, item) => sum + item.total, 0);
+  return (
+    <section className={styles.panel} style={{ flex: "1 1 320px" }}>
+      <h2>Benita knowledge engine</h2>
+      <p className={styles.muted}>{number(places)} places · {number(benita.webListings)} web listings · {number(benita.facts)} facts · {number(pending)} pages waiting</p>
+      {benita.recordsBySource.slice(0, 8).map((item) => <Line key={item.label} label={item.label} value={item.total} />)}
+      <p className={styles.muted}>Latest collection runs</p>
+      {benita.lastJobs.slice(0, 6).map((job) => <Line key={`${job.source}-${job.at}`} label={`${job.source} · ${job.status}${job.error ? ` (${job.error})` : ""}`} value={job.accepted} />)}
+    </section>
   );
 }
 

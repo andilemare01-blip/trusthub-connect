@@ -6,7 +6,8 @@ Benita collects public information about Zimbabwean businesses, things for sale,
 
 | Piece | Where | What it does |
 | --- | --- | --- |
-| `benita-ingest` | `supabase/functions/benita-ingest/` (Supabase edge function) | Collects data: OpenStreetMap cells, configured websites, ZERA fuel prices and the RBZ exchange rate |
+| `benita-ingest` | `supabase/functions/benita-ingest/` (Supabase edge function) | Collects configured websites, ZERA fuel prices and the RBZ exchange rate |
+| `benita_osm_request()` / `benita_osm_process()` | Postgres functions | OpenStreetMap: the database fetches each 1-degree cell from Overpass through pg_net, then parses it, names each place's town and suburb from the nearest OSM places, and upserts it |
 | `benita_search()` | Postgres function | One ranked search over `knowledge_records`, directory-only `businesses` and `trusthub_connect_listings`, de-duplicated, with a trust tier per row |
 | `benita_current_facts()` | Postgres function | Latest value of every fact (`fuel.diesel`, `fx.usd_zwg`, ...) |
 | `benita_stats()` | Postgres function | Counts and latest jobs for the admin overview |
@@ -67,7 +68,8 @@ select benita_call('{"action":"probe","url":"https://example.co.zw/"}'::jsonb);
 | Job | Schedule | Does |
 | --- | --- | --- |
 | `benita-tick` | every 10 min | One batch for the website that waited longest, facts once a day, then the business mirror |
-| `benita-osm` | every 4 min | One OpenStreetMap cell (`benita_osm_cells`); every cell is refreshed every 14 days |
+| `benita-osm` | every 4 min | Requests the next OpenStreetMap cell (`benita_osm_cells`), one in flight at a time, busiest towns first; every cell is refreshed every 14 days |
+| `benita-osm-process` | every 2 min | Parses finished Overpass responses into `benita_places` and `knowledge_records` |
 | `benita-housekeeping` | hourly at :17 | Marks jobs stopped by the 150 s function limit as failed; expires web listings past `expires_at` |
 
 Every run writes a row to `knowledge_ingestion_jobs` with records seen, accepted and rejected. The admin overview shows the pile and the latest runs in the **Benita knowledge engine** panel.
@@ -78,9 +80,13 @@ Every run writes a row to `knowledge_ingestion_jobs` with records seen, accepted
 
 ```sql
 select benita_call('{"action":"web","source":"vacancymail"}'::jsonb);
-select benita_call('{"action":"osm","key":"all","tile":"-18,31"}'::jsonb);   -- Harare's cell
+select benita_osm_request('-18,31');   -- Harare's cell, parsed by the next benita_osm_process()
 select benita_call('{"action":"facts"}'::jsonb);
 ```
+
+### Why OpenStreetMap runs in the database
+
+Edge functions stop after 150 seconds, and a busy cell like Harare can take Overpass longer than that. pg_net has no such limit, so the database asks Overpass with a 290-second allowance and parses the JSON itself. From Supabase, overpass-api.de and its `lz4` and `z` mirrors answer `GET` requests. They refuse `POST` (HTTP 406) and agents named like generic crawlers, so Overpass calls identify as `TrustHubConnect-Benita/1.0` with a link to this repository. The edge function's `osm` action is kept for manual use on small cells.
 
 ## Deploying
 

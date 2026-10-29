@@ -166,3 +166,20 @@ test("with no facts collected yet, a fuel question falls through to the normal f
   const reply = await say("fuel price today");
   assert.doesNotMatch(reply.reply, /US\$\d/);
 });
+
+test("a message nothing else understands is answered by a confident Benita match, never a weak one", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.benitaResults.push(
+    result({ id: "s1", name: "Gweru Solar Centre", category: "Solar & Electrical", city: "Gweru", area: null, score: 1.07 }),
+    result({ id: "s2", name: "Midlands Solar Panels", category: "Solar & Electrical", city: "Gweru", area: null, score: 1.0 }),
+  );
+  const say = conversation(store);
+  const answered = await say("solar panels wholesale gweru");
+  assert.match(answered.reply, /Gweru Solar Centre/);
+  assert.match(answered.reply, /Found online, check before paying/);
+
+  const weak = new InMemoryConnectStore(() => NOW);
+  weak.benitaResults.push(result({ id: "w1", name: "Gweru Solar Centre", city: "Gweru", score: 0.6 }), result({ id: "w2", name: "Solar Two", city: "Gweru", score: 0.7 }));
+  const unsure = await conversation(weak)("solar panels wholesale gweru");
+  assert.doesNotMatch(unsure.reply, /Gweru Solar Centre/, "low-confidence matches are not presented as answers");
+});

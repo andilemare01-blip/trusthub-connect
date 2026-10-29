@@ -9,7 +9,8 @@ import { clean, searchText, zwPhone } from "./normalise.ts";
 /** overpass-api.de refuses agents named like generic crawlers (HTTP 406), so Overpass gets a descriptive agent with a contact link. */
 const OVERPASS_AGENT = "TrustHubConnect-Benita/1.0 (+https://github.com/andilemare01-blip/trusthub-connect)";
 
-const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+// From Supabase, overpass-api.de and its mirrors answer GET; POST is refused with 406 and other public servers time out.
+const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://lz4.overpass-api.de/api/interpreter", "https://z.overpass-api.de/api/interpreter"];
 
 /**
  * Zimbabwe as 1-degree cells named by their south-west corner ("-18,31" holds Harare).
@@ -40,7 +41,7 @@ async function overpass(query: string, budgetMs: number, perServerMs: number): P
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), left);
     try {
-      const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": OVERPASS_AGENT, accept: "application/json" }, body: "data=" + encodeURIComponent(query), signal: controller.signal });
+      const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, { headers: { "user-agent": OVERPASS_AGENT, accept: "application/json" }, signal: controller.signal });
       if (response.ok) { const data = await response.json(); clearTimeout(timer); return data; }
       failures.push(`${new URL(endpoint).host} HTTP ${response.status}`);
     } catch (error) {

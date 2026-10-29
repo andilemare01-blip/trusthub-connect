@@ -68,7 +68,7 @@ select benita_call('{"action":"probe","url":"https://example.co.zw/"}'::jsonb);
 | Job | Schedule | Does |
 | --- | --- | --- |
 | `benita-tick` | every 10 min | One batch for the website that waited longest, facts once a day, then the business mirror |
-| `benita-osm` | every 4 min | Requests the next OpenStreetMap cell (`benita_osm_cells`), one in flight at a time, busiest towns first; every cell is refreshed every 14 days |
+| `benita-osm` | every 2 min | Sends the next OpenStreetMap task (`benita_osm_tasks`: one per 1-degree cell and kind of place, plus the cell's towns and suburbs), one in flight at a time, busiest towns first, rotating across `lz4`, `z` and the main overpass-api.de server; each task is refreshed every 14 days and retried with back-off if it fails |
 | `benita-osm-process` | every 2 min | Parses finished Overpass responses into `benita_places` and `knowledge_records` |
 | `benita-housekeeping` | hourly at :17 | Marks jobs stopped by the 150 s function limit as failed; expires web listings past `expires_at` |
 
@@ -80,13 +80,13 @@ Every run writes a row to `knowledge_ingestion_jobs` with records seen, accepted
 
 ```sql
 select benita_call('{"action":"web","source":"vacancymail"}'::jsonb);
-select benita_osm_request('-18,31');   -- Harare's cell, parsed by the next benita_osm_process()
+select benita_osm_next(1);   -- send the next OpenStreetMap task now; benita_osm_process() parses it
 select benita_call('{"action":"facts"}'::jsonb);
 ```
 
 ### Why OpenStreetMap runs in the database
 
-Edge functions stop after 150 seconds, and a busy cell like Harare can take Overpass longer than that. pg_net has no such limit, so the database asks Overpass with a 290-second allowance and parses the JSON itself. From Supabase, overpass-api.de and its `lz4` and `z` mirrors answer `GET` requests. They refuse `POST` (HTTP 406) and agents named like generic crawlers, so Overpass calls identify as `TrustHubConnect-Benita/1.0` with a link to this repository. The edge function's `osm` action is kept for manual use on small cells.
+Edge functions stop after 150 seconds, and a busy cell like Harare can take Overpass longer than that. One query per kind of place keeps each request small: the combined query for a busy cell gets HTTP 502 from the public servers. pg_net has no such limit, so the database asks Overpass with a 290-second allowance and parses the JSON itself. From Supabase, overpass-api.de and its `lz4` and `z` mirrors answer `GET` requests. They refuse `POST` (HTTP 406) and agents named like generic crawlers, so Overpass calls identify as `TrustHubConnect-Benita/1.0` with a link to this repository. The edge function's `osm` action is kept for manual use on small cells.
 
 ## Deploying
 

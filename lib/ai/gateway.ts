@@ -24,17 +24,30 @@ export interface AiRequest {
 
 const CHARS_PER_TOKEN = 3;
 
-/** One provider call per key, no retries, hard input/output limits and a recorded-spend ceiling. */
+/** A failed provider attempt, reported for diagnosis. Never contains the key or message content. */
+export interface AiAttemptFailure { reason: AiFailure; model: string; providerStatus?: number; providerMessage?: string }
+
+/**
+ * Failures specific to one model, so the next model in the chain may succeed:
+ * a retired or unavailable model (402/403/404), that model being rate-limited,
+ * or an unusable reply. Provider-wide failures (5xx, timeouts, unknown 4xx)
+ * are not retried, because another model would almost certainly fail too and
+ * each retry would add cost and delay to the WhatsApp reply.
+ */
+const RETRYABLE: ReadonlySet<AiFailure> = new Set<AiFailure>(["model_access", "rate_limited", "invalid_response"]);
+
+/** One logical call per key, no retries of the same model, a fallback chain of models, hard input/output limits and a recorded-spend ceiling. */
 export class AiGateway {
   private readonly status: AiConfigStatus;
   private readonly ledger: AiSpendLedger;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => string;
+  private readonly onFailure?: (failure: AiAttemptFailure) => void | Promise<void>;
   private readonly inFlight = new Set<string>();
   private tripped = false;
 
-  constructor(status: AiConfigStatus, ledger: AiSpendLedger, fetchImpl: typeof fetch = fetch, now: () => string = () => new Date().toISOString()) {
-    this.status = status; this.ledger = ledger; this.fetchImpl = fetchImpl; this.now = now;
+  constructor(status: AiConfigStatus, ledger: AiSpendLedger, fetchImpl: typeof fetch = fetch, now: () => string = () => new Date().toISOString(), onFailure?: (failure: AiAttemptFailure) => void | Promise<void>) {
+    this.status = status; this.ledger = ledger; this.fetchImpl = fetchImpl; this.now = now; this.onFailure = onFailure;
   }
 
   get enabled(): boolean { return this.status.enabled && !this.tripped; }
@@ -55,61 +68,82 @@ export class AiGateway {
       } catch { return { ok: false, reason: "ledger_unavailable" }; }
       if (total + worstCase > config.spendLimitMicroUsd) return { ok: false, reason: "budget_exhausted" };
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-      let response: Response;
-      try {
-        const headers: Record<string, string> = {
-          Authorization: `Bearer ${config.apiKey}`,
-          "Content-Type": "application/json",
-        };
-        // OpenRouter attribution is optional and contains no secrets.
-        if (config.httpReferer) headers["HTTP-Referer"] = config.httpReferer;
-        if (config.appTitle) headers["X-OpenRouter-Title"] = config.appTitle;
-        response = await this.fetchImpl(`${config.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model: config.model,
-            temperature: 0,
-            max_tokens: config.maxOutputTokens,
-            messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }],
-            ...(request.json ? { response_format: { type: "json_object" } } : {}),
-          }),
-          signal: controller.signal,
-          cache: "no-store",
-        });
-      } catch (error) {
-        // The provider may have processed the request, so charge the worst case.
-        await this.record(request, config.model, inputTokens, config.maxOutputTokens, worstCase, true);
-        return { ok: false, reason: error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /abort/i.test(error.message)) ? "timeout" : "unavailable" };
-      } finally { clearTimeout(timer); }
-
-      if (response.status === 429) return { ok: false, reason: "rate_limited" };
-      if (!response.ok) {
-        // Surface the provider's own message so a 400 is diagnosable instead of a silent "unavailable".
-        const providerMessage = await readProviderMessage(response);
-        // A 4xx the provider rejected before generating tokens consumed none, so no spend is recorded.
-        // A 5xx may have processed the request server-side, so the worst case is charged.
-        if (response.status >= 500) await this.record(request, config.model, inputTokens, config.maxOutputTokens, worstCase, true);
-        return { ok: false, reason: providerFailureReason(response.status), providerMessage };
+      let last: AiResult = { ok: false, reason: "unavailable" };
+      const models = config.models.length ? config.models : [config.model];
+      const started = Date.now();
+      for (const [index, model] of models.entries()) {
+        // Fallbacks stop once the time budget is spent, so a WhatsApp reply is never held up for several timeouts.
+        if (index > 0 && Date.now() - started >= config.timeoutMs) break;
+        last = await this.attempt(request, model, index, inputTokens, worstCase);
+        if (last.ok || !RETRYABLE.has(last.reason)) return last;
       }
-      const data: unknown = await response.json().catch(() => null);
-      const body = data && typeof data === "object" ? data as { choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } } : null;
-      const promptTokens = body?.usage?.prompt_tokens;
-      const completionTokens = body?.usage?.completion_tokens;
-      const reported = typeof promptTokens === "number" && typeof completionTokens === "number" && promptTokens >= 0 && completionTokens >= 0;
-      const cost = reported ? Math.ceil(promptTokens * config.inputUsdPerMillion + completionTokens * config.outputUsdPerMillion) : worstCase;
-      await this.record(request, config.model, reported ? promptTokens : inputTokens, reported ? completionTokens : config.maxOutputTokens, cost, !reported);
-      const text = body?.choices?.[0]?.message?.content;
-      if (typeof text !== "string" || !text.trim()) return { ok: false, reason: "invalid_response" };
-      return { ok: true, text, costMicroUsd: cost };
+      return last;
     } finally { this.inFlight.delete(request.key); }
   }
 
-  private async record(request: AiRequest, model: string, inputTokens: number, outputTokens: number, costMicroUsd: number, estimated: boolean): Promise<void> {
+  /** One provider call for one model. Each attempt has its own ledger key so every paid attempt is counted. */
+  private async attempt(request: AiRequest, model: string, index: number, inputTokens: number, worstCase: number): Promise<AiResult> {
+    const { config } = this.status as Extract<AiConfigStatus, { enabled: true }>;
+    const ledgerKey = index === 0 ? request.key : `${request.key}~${index}`;
+    const fail = async (reason: AiFailure, providerStatus?: number, providerMessage?: string): Promise<AiResult> => {
+      await this.reportFailure({ reason, model, providerStatus, providerMessage });
+      return { ok: false, reason, providerMessage };
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    let response: Response;
     try {
-      await this.ledger.record({ key: request.key, purpose: request.purpose, model, inputTokens, outputTokens, costMicroUsd, estimated, at: this.now() });
+      const headers: Record<string, string> = { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" };
+      // OpenRouter attribution is optional and contains no secrets.
+      if (config.httpReferer) headers["HTTP-Referer"] = config.httpReferer;
+      if (config.appTitle) headers["X-OpenRouter-Title"] = config.appTitle;
+      response = await this.fetchImpl(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: config.maxOutputTokens,
+          messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }],
+          ...(request.json ? { response_format: { type: "json_object" } } : {}),
+        }),
+        signal: controller.signal,
+        cache: "no-store",
+      });
+    } catch (error) {
+      // The provider may have processed the request, so charge the worst case.
+      await this.record(request, ledgerKey, model, inputTokens, config.maxOutputTokens, worstCase, true);
+      return fail(error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /abort/i.test(error.message)) ? "timeout" : "unavailable");
+    } finally { clearTimeout(timer); }
+
+    if (response.status === 429) return fail("rate_limited", 429);
+    if (!response.ok) {
+      // Surface the provider's own message so a 400 is diagnosable instead of a silent "unavailable".
+      const providerMessage = await readProviderMessage(response);
+      // A 4xx the provider rejected before generating tokens consumed none, so no spend is recorded.
+      // A 5xx may have processed the request server-side, so the worst case is charged.
+      if (response.status >= 500) await this.record(request, ledgerKey, model, inputTokens, config.maxOutputTokens, worstCase, true);
+      return fail(providerFailureReason(response.status), response.status, providerMessage);
+    }
+    const data: unknown = await response.json().catch(() => null);
+    const body = data && typeof data === "object" ? data as { choices?: { message?: { content?: unknown } }[]; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } } : null;
+    const promptTokens = body?.usage?.prompt_tokens;
+    const completionTokens = body?.usage?.completion_tokens;
+    const reported = typeof promptTokens === "number" && typeof completionTokens === "number" && promptTokens >= 0 && completionTokens >= 0;
+    const cost = reported ? Math.ceil(promptTokens * config.inputUsdPerMillion + completionTokens * config.outputUsdPerMillion) : worstCase;
+    await this.record(request, ledgerKey, model, reported ? promptTokens : inputTokens, reported ? completionTokens : config.maxOutputTokens, cost, !reported);
+    const text = body?.choices?.[0]?.message?.content;
+    if (typeof text !== "string" || !text.trim()) return fail("invalid_response", response.status);
+    return { ok: true, text, costMicroUsd: cost };
+  }
+
+  private async reportFailure(failure: AiAttemptFailure): Promise<void> {
+    try { await this.onFailure?.(failure); } catch { /* diagnostics must never break an answer */ }
+  }
+
+  private async record(request: AiRequest, ledgerKey: string, model: string, inputTokens: number, outputTokens: number, costMicroUsd: number, estimated: boolean): Promise<void> {
+    try {
+      await this.ledger.record({ key: ledgerKey, purpose: request.purpose, model, inputTokens, outputTokens, costMicroUsd, estimated, at: this.now() });
     } catch {
       // Spend can no longer be tracked reliably, so stop optional AI for this instance.
       this.tripped = true;

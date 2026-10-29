@@ -1,7 +1,8 @@
 export type TrustHubRuntimeEventName =
   | "webhook_authenticated" | "inbound_normalized" | "identity_resolved" | "request_understood"
   | "knowledge_lookup" | "answer_resolved" | "contribution_recorded" | "community_help_planned"
-  | "agent_match_proposed" | "handoff_status_changed" | "notification_dispatched" | "request_outcome_recorded";
+  | "agent_match_proposed" | "handoff_status_changed" | "notification_dispatched" | "request_outcome_recorded"
+  | "ai_call_failed";
 
 export interface TrustHubRuntimeEvent {
   id: string;

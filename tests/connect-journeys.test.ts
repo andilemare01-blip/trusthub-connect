@@ -222,14 +222,15 @@ test("the area pulse uses real searches and says so honestly when there are none
   assert.notEqual(unrelated.conversation.connect?.flow, "area", "a new request after the pulse leaves the pulse");
 });
 
-test("Ask Wisdom confirms before spending a credit and refunds it when no answer comes back", async () => {
+test("Ask Wisdom confirms before spending a credit and only charges once it has answered", async () => {
   let calls = 0;
   const answerer: DeepQuestionAnswerer = async () => { calls += 1; return calls === 1 ? "Data shows 3 searches for car washes in Avondale and none listed." : null; };
   const { store, say } = setup({ answerer });
   await say("Hi");
   await say("9");
   const confirm = await say("Where in Harare should I open a car wash?");
-  assert.match(confirm.reply, /uses \*1 credit\*\. You have 10/);
+  assert.match(confirm.reply, /uses \*1 credit\*/);
+  assert.match(confirm.reply, /You have 10/);
   assert.equal(calls, 0, "nothing is spent or asked before the person confirms");
   const answered = await say("btn.use_credit");
   assert.match(answered.reply, /3 searches for car washes/);
@@ -237,8 +238,8 @@ test("Ask Wisdom confirms before spending a credit and refunds it when no answer
   await say("9");
   await say("What sells best in Chinhoyi?");
   const failed = await say("btn.use_credit");
-  assert.match(failed.reply, /didn't use your credit/);
-  assert.equal(await store.creditBalance("101"), 9);
+  assert.match(failed.reply, /nothing was charged/);
+  assert.equal(await store.creditBalance("101"), 9, "a question that gets no answer costs nothing, so there is nothing to refund");
 });
 
 test("without AI, Ask Wisdom hands the question to the normal free search", async () => {

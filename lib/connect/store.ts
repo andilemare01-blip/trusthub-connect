@@ -22,6 +22,32 @@ export interface ReviewCard {
   business: DirectoryBusiness | null;
 }
 
+/** A review as shown to a person reading about a business. `checked` is true once TrustHub has published it. */
+export interface ReviewItem {
+  id: string;
+  rating: number;
+  text: string;
+  verifiedVisit: boolean;
+  checked: boolean;
+  createdAt: string;
+  business: DirectoryBusiness;
+}
+
+export interface ReviewQuery {
+  /** Words from the question. A review matches when any word appears in the business name, category or review text. */
+  terms: string[];
+  city: string | null;
+  limit: number;
+}
+
+/** Shared by both stores so the test and production behaviour cannot drift apart. */
+export function reviewMatches(item: { business: DirectoryBusiness; text: string }, query: ReviewQuery): boolean {
+  if (query.city && lower(item.business.city) !== lower(query.city)) return false;
+  if (!query.terms.length) return true;
+  const haystack = lower(`${item.business.name} ${item.business.category ?? ""} ${item.text}`);
+  return query.terms.some((term) => haystack.includes(lower(term)));
+}
+
 export interface NewReview {
   businessId: string;
   identityId: string;
@@ -123,6 +149,8 @@ export interface ConnectStore {
   /** The newest review this identity left for this business, if any. */
   lastReviewAt(identityId: string, businessId: string): Promise<string | null>;
   saveReview(review: NewReview): Promise<{ id: string; status: "published" | "pending" }>;
+  /** Reviews left through TrustHub Connect, newest first. Rejected reviews are never returned. */
+  searchReviews(query: ReviewQuery): Promise<ReviewItem[]>;
   saveBusinessSubmission(submission: NewBusinessSubmission): Promise<{ id: string }>;
   saveListing(listing: NewListing): Promise<{ id: string }>;
   searchListings(query: ListingQuery): Promise<Listing[]>;
@@ -180,6 +208,16 @@ export class InMemoryConnectStore implements ConnectStore {
     const stored = { ...review, id: this.nextId("review"), status: review.verifiedVisit ? "published" as const : "pending" as const, createdAt: this.now() };
     this.reviews.push(stored);
     return { id: stored.id, status: stored.status };
+  }
+  async searchReviews(query: ReviewQuery): Promise<ReviewItem[]> {
+    const items: ReviewItem[] = [];
+    for (const review of this.reviews) {
+      const business = this.businesses.find((candidate) => candidate.id === review.businessId);
+      if (!business) continue;
+      const item: ReviewItem = { id: review.id, rating: review.rating, text: review.text, verifiedVisit: review.verifiedVisit, checked: review.status === "published", createdAt: review.createdAt, business };
+      if (reviewMatches(item, query)) items.push(item);
+    }
+    return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, query.limit);
   }
   async saveBusinessSubmission(submission: NewBusinessSubmission) {
     const existing = this.submissions.find((stored) => stored.sourceMessageId === submission.sourceMessageId);

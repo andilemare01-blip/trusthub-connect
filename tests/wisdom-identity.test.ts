@@ -82,8 +82,8 @@ test("a bare city reply and a repeated greeting keep the same request and name",
 test("a message that is not a request gets a short example and the tappable menu", async () => {
   const { coordinator: c } = coordinator();
   const result = await say(c, "13", "What time is it?", 0);
-  assert.match(result.reply, /plumber in Harare/);
-  assert.equal(result.interactive?.type, "list");
+  assert.match(result.reply, /plumber in Avondale/);
+  assert.ok(result.interactive, "a tappable choice is offered");
 });
 
 import { readFileSync } from "node:fs";

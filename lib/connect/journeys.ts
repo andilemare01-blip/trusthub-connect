@@ -15,9 +15,11 @@
 import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
-import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent } from "./store.ts";
+import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
+import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
+import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
-export type ConnectFlow = "review" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback";
+export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback";
 type Scalar = string | number | boolean | null;
 export interface ConnectJourneyState { flow: ConnectFlow; step: string; data: Record<string, Scalar> }
 
@@ -31,7 +33,7 @@ export interface ConnectContext {
 }
 
 /** Answers a deep question from TrustHub data; null when it could not answer. Injected so tests need no AI. */
-export type DeepQuestionAnswerer = (question: string, city: string | null, key: string) => Promise<string | null>;
+export type DeepQuestionAnswerer = (question: string, city: string | null, key: string, assistantName?: string) => Promise<string | null>;
 
 export interface ConnectReply {
   reply: string;
@@ -156,8 +158,13 @@ export class ConnectJourneys {
         const phone = parseCheckedPhone(message);
         return phone ? await this.scamResult(phone) : this.begin("menu.scam", context);
       }
-      if (/^(?:feedback|suggestion|complaint)\b/i.test(message)) return this.askFeedback();
+      if (/^(?:feedback|suggestion|complaint)\s*$/i.test(message)) return this.askFeedback();
+      if (isFeedbackCue(message)) return await this.recordFeedback(message, context);
       if (/\b(?:my (?:credits|profile|account|balance)|create (?:a |my )?(?:profile|account)|sign ?up|register)\b/i.test(message)) return await this.profile(context);
+      const social = this.socialReply(message, context);
+      if (social) return social;
+      const reviews = readReviewsQuestion(message);
+      if (reviews) return await this.readReviews(reviews);
       return null;
     } catch (error) {
       console.error(JSON.stringify({ event: "connect.journey_failed", flow: state?.flow ?? null, step: state?.step ?? null, errorType: error instanceof Error ? error.name : "unknown", detail: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
@@ -209,8 +216,8 @@ export class ConnectJourneys {
         return { reply: body, state: null, action: "start_journey", handoff: "business_discovery" };
       }
       case "menu.review": {
-        const body = "Which business would you like to review? Send its name, and the town if you know it.\nFor example: *Sunny Bakery, Chinhoyi*";
-        return { reply: body, state: { flow: "review", step: "which", data: {} }, action: "start_journey" };
+        const body = "Would you like to write a review, or read what people say?";
+        return { reply: body, interactive: buttons(body, [["btn.write_review", "Write a review"], ["btn.read_reviews", "Read reviews"]]), state: { flow: "review", step: "choose", data: {} }, action: "start_journey" };
       }
       case "menu.add_business":
         return { reply: "Great, let's add it. What's the business called?", state: { flow: "add_business", step: "name", data: {} }, action: "start_journey" };
@@ -234,8 +241,10 @@ export class ConnectJourneys {
       }
       case "menu.ask": {
         const balance = context.identityId ? await this.store.creditBalance(context.identityId) : 0;
-        const deep = this.answerer ? `\n\nSimple searches are always free. Deep questions use 1 credit (you have ${balance}).` : "";
-        return { reply: `Ask me anything about businesses, prices or your area.${deep}`, state: { flow: "ask", step: "question", data: {} }, action: "start_journey" };
+        const body = this.answerer
+          ? `Ask me anything about businesses, prices or your area.\n\nSimple searches like *plumber in Avondale* are always free. Deep questions use 1 credit, and you're only charged when I answer. You have ${balance}.`
+          : "Ask me anything about businesses, prices or your area.\n\nSimple searches like *plumber in Avondale* are always free.";
+        return { reply: body, state: { flow: "ask", step: "question", data: {} }, action: "start_journey" };
       }
       case "menu.profile":
         return await this.profile(context);
@@ -263,6 +272,7 @@ export class ConnectJourneys {
       case "area": return await this.area(state, text);
       case "scam": return await this.scam(state, text, context);
       case "ask": return await this.ask(state, text, context);
+      case "read_reviews": return await this.readReviewsFromText(text);
       case "feedback": return await this.feedback(state, text, context);
     }
   }
@@ -299,6 +309,12 @@ export class ConnectJourneys {
 
   private async review(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply> {
     const data = state.data;
+    if (state.step === "choose") {
+      if (chose(text, "btn.read_reviews", "read reviews", "read", "reviews")) return this.askWhichToRead();
+      if (chose(text, "btn.write_review", "write a review", "write", "review")) return this.askWhichToReview();
+      // Anything typed here is taken as the business name to review.
+      return await this.findForReview(text, context);
+    }
     const openBusiness = async (id: string) => {
       const business = await this.store.getBusiness(id);
       if (!business) return { reply: "I couldn't open that business. Send the name again, please.", state: { flow: "review" as const, step: "which", data: {} }, action: "clarify" as const };
@@ -341,6 +357,41 @@ export class ConnectJourneys {
       return { reply, interactive: buttons(reply, [["menu.review", "Review another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
     }
     return this.repeat(state);
+  }
+
+  private askWhichToReview(): ConnectReply {
+    return { reply: "Which business would you like to review? Send its name, and the town if you know it.\nFor example: *Sunny Bakery, Chinhoyi*", state: { flow: "review", step: "which", data: {} }, action: "start_journey" };
+  }
+
+  private askWhichToRead(): ConnectReply {
+    return { reply: "Which business, or what kind of business, and where?\nFor example: *chicken in Chiredzi* or *Sunny Bakery, Chinhoyi*", state: { flow: "read_reviews", step: "which", data: {} }, action: "start_journey" };
+  }
+
+  private async readReviewsFromText(text: string): Promise<ConnectReply> {
+    const place = parsePlace(text);
+    const terms = keywords(text.replace(/\b(?:in|at|near|around)\s+\S+$/i, " ")).slice(0, 4);
+    if (!terms.length) return { reply: "Which business, or what kind of business? For example: *chicken in Chiredzi*", state: { flow: "read_reviews", step: "which", data: {} }, action: "clarify" };
+    return await this.readReviews({ terms, city: place.city });
+  }
+
+  /** Shows published and unchecked reviews that match the question, with a way to write one. */
+  private async readReviews(question: { terms: string[]; city: string | null }): Promise<ConnectReply> {
+    const found: ReviewItem[] = await this.store.searchReviews({ terms: question.terms, city: question.city, limit: 5 });
+    const topic = `${question.terms.join(" ") || "businesses"}${question.city ? ` in ${question.city}` : ""}`;
+    const actions: [string, string][] = [["menu.review", "Write a review"], ["btn.menu", "Main menu"]];
+    if (!found.length) {
+      const body = `Nobody has reviewed *${topic}* on TrustHub yet. Be the first to tell others how it went.`;
+      return { reply: body, interactive: buttons(body, actions), state: null, action: "answer" };
+    }
+    const lines = found.map((item, index) => {
+      const stars = "★".repeat(item.rating) + "☆".repeat(Math.max(0, 5 - item.rating));
+      const place = where(item.business);
+      const status = item.verifiedVisit ? "Verified visit" : item.checked ? "Checked" : "Not checked yet";
+      const comment = item.text ? `"${clip(item.text, 160)}"` : "No comment, just a rating";
+      return `${index + 1}. ${stars} *${clip(item.business.name, 40)}*${place ? ` · ${place}` : ""}\n   ${comment} · ${status}`;
+    });
+    const body = [`Here's what people say about *${topic}*:`, "", ...lines, "", "Reviews marked *Not checked yet* have not been checked by the team."].join("\n");
+    return { reply: body, interactive: buttons(body, actions), state: null, action: "answer" };
   }
 
   private async findForReview(text: string, context: ConnectContext): Promise<ConnectReply> {
@@ -659,32 +710,56 @@ export class ConnectJourneys {
 
   private async ask(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply | null> {
     if (state.step === "question") {
-      if (!this.answerer || !context.identityId) return { reply: "", state: null, action: "answer", pass: true };
+      if (isFeedbackCue(text)) return await this.recordFeedback(text, context);
+      // A plain search is always free, so the coordinator answers it as a search.
+      if (isSearchLike(text)) return { reply: "", state: null, action: "answer", pass: true };
+      if (!this.answerer || !context.identityId) return this.deepUnavailable();
       const balance = await this.store.creditBalance(context.identityId);
       if (balance < 1) {
         const body = "You're out of credits. You earn 1 free credit for every review, business or listing you add.";
         return { reply: body, interactive: buttons(body, [["menu.review", "Rate or review"], ["menu.add_business", "Add a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
       }
-      const body = `That's a deep question. It uses *1 credit*. You have ${balance}.`;
+      const body = `That's a deep question. It uses *1 credit*, and you're only charged if I answer. You have ${balance}.`;
       return { reply: body, interactive: buttons(body, [["btn.use_credit", "Use 1 credit"], ["btn.cancel", "Cancel"]]), state: { flow: "ask", step: "confirm", data: { question: text.slice(0, 500) } }, action: "clarify" };
     }
     if (state.step === "confirm") {
       if (!chose(text, "btn.use_credit", "use 1 credit", "use credit", ...YES)) return { reply: "Okay, no credit used.", interactive: buttons("Okay, no credit used.", [["btn.menu", "Main menu"]]), state: null, action: "answer" };
-      if (!this.answerer || !context.identityId) return { reply: "", state: null, action: "answer", pass: true };
+      if (!this.answerer || !context.identityId) return this.deepUnavailable();
       const reference = context.providerMessageId ?? `local:ask:${this.now().getTime()}`;
       const question = String(state.data.question ?? "");
       const city = parsePlace(question).city ?? await this.store.lastCity(context.identityId);
-      const spent = await this.store.addCredits(context.identityId, -1, "deep_question", reference);
-      const answer = await this.answerer(question, city, reference).catch(() => null);
+      // Answer first, then charge: a failed answer never costs a credit, so no refund is needed.
+      const answer = await this.answerer(question, city, reference, context.assistantName).catch(() => null);
       if (!answer) {
-        if (spent.added) await this.store.addCredits(context.identityId, 1, "admin_adjustment", `refund:${reference}`);
-        const body = "I couldn't answer that properly right now, so I didn't use your credit. Please try again later.";
-        return { reply: body, interactive: buttons(body, [["btn.menu", "Main menu"]]), state: null, action: "answer" };
+        const body = "I couldn't work that one out just now, so nothing was charged. Try again in a bit, or ask it as a simple search, like *plumber in Avondale*.";
+        return { reply: body, interactive: buttons(body, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
       }
+      const spent = await this.store.addCredits(context.identityId, -1, "deep_question", reference);
       const reply = `${clipText(answer, 1500)}\n\n_From TrustHub data. ${spent.balance} ${spent.balance === 1 ? "credit" : "credits"} left._`;
       return { reply, interactive: buttons(reply, [["menu.ask", "Ask another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
     }
     return this.repeat(state);
+  }
+
+  private deepUnavailable(): ConnectReply {
+    const body = "Wisdom's deep answers are resting right now, so nothing was charged. Simple searches still work, like *plumber in Avondale*.";
+    return { reply: body, interactive: buttons(body, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
+  }
+
+  /** Light replies to thanks, goodbyes, small talk and requests for a joke. */
+  private socialReply(message: string, context: ConnectContext): ConnectReply | null {
+    const name = context.assistantName;
+    const menu: [string, string][] = [["menu.find", "Find a business"], ["btn.menu", "Main menu"]];
+    if (/^(?:bye|goodbye|see you|see ya|later|ciao|cheers)\b[\s!.]*$/i.test(message)) return { reply: goodbyeLine(), state: null, action: "answer" };
+    if (/\b(?:joke|make me laugh|something funny|say something funny|be funny)\b/i.test(message)) {
+      const body = humourLine(name, message.length);
+      return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
+    }
+    if (/^(?:how are you|how's it going|how is it going|what's up|whats up|how was your day|how r u)\b[\s!?.]*$/i.test(message)) {
+      const body = smalltalkLine(name);
+      return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
+    }
+    return null;
   }
 
   // ------------------------------------------------------- profile & feedback
@@ -700,6 +775,14 @@ export class ConnectJourneys {
       "", "Earn 1 free credit for every review, business or listing you add. Credits are used for deep questions in Ask Wisdom.",
     ].join("\n");
     return { reply, interactive: buttons(reply, [["btn.feedback", "Send feedback"], ["btn.menu", "Main menu"]]), state: { flow: "feedback", step: "offer", data: {} }, action: "answer" };
+  }
+
+  /** Saves feedback in one step when the message already says what the problem is. */
+  private async recordFeedback(message: string, context: ConnectContext): Promise<ConnectReply> {
+    if (!context.identityId) return this.requireIdentity(null);
+    await this.store.saveFeedback({ message: message.slice(0, 1000), identityId: context.identityId });
+    const body = "Thanks, that's noted. The TrustHub team reads every message, and it's how I get better.";
+    return { reply: body, interactive: buttons(body, [["btn.menu", "Main menu"]]), state: null, action: "answer" };
   }
 
   private askFeedback(): ConnectReply {

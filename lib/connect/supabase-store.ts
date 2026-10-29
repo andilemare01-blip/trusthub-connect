@@ -4,8 +4,8 @@
  * by row-level security. Errors are thrown with the operation name only, never
  * with row contents or phone numbers.
  */
-import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ScamSummary, SearchLogEntry } from "./store.ts";
-import { median } from "./store.ts";
+import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
+import { median, reviewMatches } from "./store.ts";
 
 type Row = Record<string, unknown>;
 interface Result { data: Row | Row[] | null; error: { message: string; code?: string } | null; count?: number | null }
@@ -118,6 +118,25 @@ export class SupabaseConnectStore implements ConnectStore {
       .eq("whatsapp_identity_id", identity(identityId)).eq("directory_business_id", businessId)
       .order("created_at", { ascending: false }).limit(1), "Read previous review");
     return text(found[0]?.created_at);
+  }
+
+  async searchReviews(query: ReviewQuery): Promise<ReviewItem[]> {
+    // Recent reviews first; the filter runs here because the set is small and the match rules must match the in-memory store.
+    const reviews = rows(await this.db.from("trusthub_connect_reviews")
+      .select("id,rating,review_text,status,verified_visit,created_at,directory_business_id")
+      .in("status", ["published", "pending"]).order("created_at", { ascending: false }).limit(300), "Search reviews");
+    const ids = [...new Set(reviews.map((row) => String(row.directory_business_id)).filter(Boolean))];
+    if (!ids.length) return [];
+    const businesses = new Map(rows(await this.db.from("businesses").select(BUSINESS_COLUMNS).in("id", ids).limit(300), "Read review businesses").map((row) => [String(row.id), business(row)]));
+    const items: ReviewItem[] = [];
+    for (const row of reviews) {
+      const found = businesses.get(String(row.directory_business_id));
+      if (!found) continue;
+      const item: ReviewItem = { id: String(row.id), rating: Number(row.rating), text: String(row.review_text ?? ""), verifiedVisit: row.verified_visit === true, checked: row.status === "published", createdAt: String(row.created_at ?? ""), business: found };
+      if (reviewMatches(item, query)) items.push(item);
+      if (items.length >= query.limit) break;
+    }
+    return items;
   }
 
   async saveReview(review: NewReview): Promise<{ id: string; status: "published" | "pending" }> {

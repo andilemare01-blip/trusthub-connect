@@ -26,16 +26,16 @@ export interface MenuRow {
 }
 
 export const MENU_ROWS: readonly MenuRow[] = [
-  { number: 1, id: "menu.find", section: "Find & review", title: "Find a business", description: "Plumbers, salons, mechanics, food and more" },
-  { number: 2, id: "menu.review", section: "Find & review", title: "Rate or review", description: "Tell others how a business treated you" },
-  { number: 3, id: "menu.add_business", section: "Find & review", title: "Add a missing business", description: "Know a good one we don't have? Add it" },
-  { number: 4, id: "menu.buy_sell", section: "Buy, sell & work", title: "Buy or sell", description: "Post an item or find what you need" },
-  { number: 5, id: "menu.jobs", section: "Buy, sell & work", title: "Jobs", description: "Find work or hire someone" },
-  { number: 6, id: "menu.houses", section: "Buy, sell & work", title: "Houses & rentals", description: "Rooms, cottages and houses by area" },
-  { number: 7, id: "menu.area", section: "My area", title: "This week near me", description: "What's trending, in demand and new" },
-  { number: 8, id: "menu.scam", section: "My area", title: "Scam check", description: "Check a number or seller before you pay" },
-  { number: 9, id: "menu.ask", section: "Me", title: "Ask Wisdom", description: "Any question about your area or business" },
-  { number: 10, id: "menu.profile", section: "Me", title: "My profile & credits", description: "Your reviews, listings and credits" },
+  { number: 1, id: "menu.find", section: "Find & review", title: "🔎 Find a business", description: "Plumbers, salons, mechanics, food and more" },
+  { number: 2, id: "menu.review", section: "Find & review", title: "⭐ Rate or review", description: "Write a review, or read what people say" },
+  { number: 3, id: "menu.add_business", section: "Find & review", title: "➕ Add a missing business", description: "Know a good one we don't have? Add it" },
+  { number: 4, id: "menu.buy_sell", section: "Buy, sell & work", title: "🛒 Buy or sell", description: "Post an item or find what you need" },
+  { number: 5, id: "menu.jobs", section: "Buy, sell & work", title: "💼 Jobs", description: "Find work or hire someone" },
+  { number: 6, id: "menu.houses", section: "Buy, sell & work", title: "🏠 Houses & rentals", description: "Rooms, cottages and houses by area" },
+  { number: 7, id: "menu.area", section: "My area", title: "Community intelligence", description: "What's trending, in demand and new" },
+  { number: 8, id: "menu.scam", section: "My area", title: "🚨 Scam check", description: "Check a number or seller before you pay" },
+  { number: 9, id: "menu.ask", section: "Me", title: "💬 Ask Wisdom", description: "Any question. Simple searches are free" },
+  { number: 10, id: "menu.profile", section: "Me", title: "👤 Profile & feedback", description: "Credits, your reviews, and send feedback" },
 ] as const;
 
 export const MENU_BUTTON_TEXT = "Choose an option";

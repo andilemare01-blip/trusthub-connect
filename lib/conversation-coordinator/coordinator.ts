@@ -18,6 +18,8 @@ import { parsePlace } from "../connect/parse.ts";
 import { unclearLine } from "../connect/persona.ts";
 import { suggestRoutes, type RouteSuggestion } from "../connect/intent-classifier.ts";
 import type { ConnectRoute } from "../connect/intent-routes.ts";
+import { benitaReply, factIntent, factReply, type BenitaResult } from "../benita/index.ts";
+import { databaseFilterTerms, serviceMatchIntent } from "../discovery/service-taxonomy.ts";
 
 /** The journey a suggested route opens, as a menu row or a button. */
 const ROUTE_ACTION: Record<ConnectRoute, [id: string, label: string] | null> = {
@@ -223,6 +225,10 @@ export class ConversationCoordinator {
     if (connectReply && !connectReply.pass) return await this.finishConnect(conversation, turn, connectReply, priorState, at);
     if (connectReply?.pass) conversation.connect = null;
 
+    // 1b. Public facts people ask every day (fuel ceilings, the ZiG rate) come straight from Benita.
+    const fact = !turn.media?.length ? await this.factAnswer(turn.text) : null;
+    if (fact) return await this.finishConnect(conversation, turn, fact, priorState, at);
+
     // 2. Natural-language requests for a guided flow join that flow instead of the old dead-end prompts.
     const intended = await this.connectIntent(turn, connectContext);
     if (intended) return await this.finishConnect(conversation, turn, intended, priorState, at);
@@ -333,10 +339,19 @@ export class ConversationCoordinator {
         reply = `I received your ${turn.media.map((item) => item.kind === "voice" ? "voice note" : item.kind).join(" and ")}, but I can't read media yet. Please type what you need.`;
         nextState = "clarification_needed";
       } else {
-        const fallback = unclearReply(conversation.assistantName ?? "Wisdom", turn.text ?? "");
-        reply = fallback.reply;
-        interactive = fallback.interactive;
-        nextState = "ready_for_request";
+        // Before admitting we didn't understand, ask Benita: "who sells cement in Gweru" often matches even when the parser can't place it.
+        const found = await this.benitaFreeText(turn.text ?? "");
+        if (found) {
+          action = "answer";
+          reply = found.reply;
+          interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["btn.menu", "Main menu"]]);
+          nextState = "answer_uncertain";
+        } else {
+          const fallback = unclearReply(conversation.assistantName ?? "Wisdom", turn.text ?? "");
+          reply = fallback.reply;
+          interactive = fallback.interactive;
+          nextState = "ready_for_request";
+        }
       }
     } else {
       // A fresh request made while a clarification is pending keeps the city already given.
@@ -378,7 +393,15 @@ export class ConversationCoordinator {
     conversation.activeTask = task;
     const searched = conversation.lastRequest;
     const discovery = searched?.category && searched.location?.city && (searched.questionType === "business_discovery" || searched.questionType === "provider_recommendation");
-    if (discovery && resolution?.status === "community_needed" && resolution.evidence.length === 0) {
+    // Nothing in the TrustHub directory: Benita's wider index (OpenStreetMap, public directories, web listings) answers instead of a dead end.
+    const emptyDirectory = !!discovery && !!resolution && (resolution.status === "unresolved" || (resolution.status === "community_needed" && resolution.evidence.length === 0));
+    const wider = emptyDirectory ? await this.benitaForRequest(searched!) : [];
+    if (wider.length) {
+      reply = `${benitaReply(wider, searched!.category!, searched!.location!.city!)}\n\n${OUTCOME_FOLLOW_UP}`;
+      interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["menu.add_business", "Add a business"]]);
+      action = "answer";
+      nextState = "answer_uncertain";
+    } else if (discovery && resolution?.status === "community_needed" && resolution.evidence.length === 0) {
       reply = `I couldn't find any ${searched.category} listed in ${searched.location!.city} on TrustHub yet. Would you like me to ask people in the ${searched.location!.city} community? I'd only share your question, never your number. Reply yes to go ahead, or no and I'll leave it there.`;
       interactive = withButtons(reply, [["btn.yes", "Yes, ask them"], ["btn.no", "No thanks"]]);
     } else if (action === "ask_community_permission") {
@@ -389,7 +412,7 @@ export class ConversationCoordinator {
       reply = `${opening ? `${opening}\n\n` : ""}${reply}\n\n${OUTCOME_FOLLOW_UP}`;
       interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["btn.menu", "Main menu"]]);
     }
-    if (resolution?.status === "unresolved" && discovery) {
+    if (resolution?.status === "unresolved" && discovery && !wider.length) {
       reply = `I couldn't find any ${searched!.category} listed in ${searched!.location!.city} on TrustHub yet. Do you know a good one? Add it and help the next person.`;
       interactive = withButtons(reply, [["menu.add_business", "Add a business"], ["menu.find", "Search again"], ["btn.menu", "Main menu"]]);
     }
@@ -405,6 +428,44 @@ export class ConversationCoordinator {
     conversation.messages.push({ id: `${turn.conversationId}:out:${conversation.messages.length}`, conversationId: turn.conversationId, channel: turn.channel ?? "web", direction: "outbound", sender: "system", text: reply, createdAt: at });
     await this.repository.save(conversation);
     return { conversationId: turn.conversationId, state: conversation.state, action, reply, resolution, conversation, communityConsentGranted, communityConsentAt, outcomeConfirmation, ...(interactive ? { interactive } : {}), ...(completedTask ? { completedTask } : {}), ...(preference ? { notificationPreference: preference } : {}) };
+  }
+
+  /** A ready reply when the message asks for today's fuel prices or exchange rate and Benita has them. */
+  private async factAnswer(text: string): Promise<ConnectReply | null> {
+    const kind = factIntent(text);
+    if (!kind) return null;
+    const facts = await this.connect.store.currentFacts(kind === "fuel" ? "fuel." : "fx.").catch(() => []);
+    const reply = factReply(kind, facts);
+    if (!reply) return null;
+    return { reply, interactive: withButtons(reply, [["btn.menu", "Main menu"]]), state: null, action: "answer" };
+  }
+
+  /** Benita results for a parsed directory request, using the service taxonomy's synonyms. */
+  private async benitaForRequest(request: NormalizedRequest): Promise<BenitaResult[]> {
+    const intent = request.category ? serviceMatchIntent(request.category, request.serviceConcept) : null;
+    const extraTerms = intent ? databaseFilterTerms(intent, 6).words : [];
+    const text = [request.entityName, request.category, request.serviceConcept].filter(Boolean).join(" ") || request.text;
+    try {
+      return await this.connect.store.benitaSearch({ text, city: request.location?.city ?? null, limit: 5, kinds: ["place"], extraTerms });
+    } catch (error) {
+      console.error(JSON.stringify({ event: "benita.search_failed", errorType: error instanceof Error ? error.name : "unknown" }));
+      return [];
+    }
+  }
+
+  /** A confident Benita answer for a message nothing else understood, or null. */
+  private async benitaFreeText(text: string): Promise<{ reply: string } | null> {
+    const clean = text.trim();
+    if (clean.length < 6 || NON_ANSWER.test(clean) || !/[\p{L}]{4,}/u.test(clean)) return null;
+    const city = parsePlace(clean).city;
+    try {
+      const results = await this.connect.store.benitaSearch({ text: clean, city, limit: 5 });
+      const strong = results.filter((result) => result.score >= 0.95);
+      if (strong.length < 2) return null;
+      return { reply: benitaReply(strong, clip(clean, 40), city) };
+    } catch {
+      return null;
+    }
   }
 
   /** Records every directory search, including the ones that found nothing, for demand intelligence. */

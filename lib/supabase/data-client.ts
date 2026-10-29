@@ -20,6 +20,8 @@ export interface SupabaseQuery extends PromiseLike<SupabaseQueryResult> {
 }
 export interface SupabaseDataClient {
   from(table: string): SupabaseQuery;
+  /** Database functions (Benita's search and facts). Optional so test doubles need not provide it. */
+  rpc?(fn: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 }
 
 export class SupabasePersistenceError extends Error {

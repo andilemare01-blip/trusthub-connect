@@ -6,6 +6,7 @@
  */
 import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
+import { benitaFacts, benitaSearch, type BenitaFact, type BenitaQuery, type BenitaResult, type BenitaRpcClient } from "../benita/index.ts";
 
 type Row = Record<string, unknown>;
 interface Result { data: Row | Row[] | null; error: { message: string; code?: string } | null; count?: number | null }
@@ -26,10 +27,14 @@ export interface ConnectQuery extends PromiseLike<Result> {
   maybeSingle(): PromiseLike<Result>;
   single(): PromiseLike<Result>;
 }
-export interface ConnectDbClient { from(table: string): ConnectQuery }
+export interface ConnectDbClient {
+  from(table: string): ConnectQuery;
+  /** Present on the real Supabase client; Benita reads through these database functions. */
+  rpc?: BenitaRpcClient["rpc"];
+}
 
 const BUSINESS_COLUMNS = "id,name,category,city,area,phone,reviews_count";
-const LISTING_COLUMNS = "id,intent,category,title,price_text,city,area,phone,status,created_at";
+const LISTING_COLUMNS = "id,intent,category,title,price_text,city,area,phone,status,created_at,source_url,expires_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IDENTITY = /^\d{1,18}$/;
 
@@ -74,9 +79,12 @@ function listing(row: Row): Listing {
   return {
     id: String(row.id), intent: String(row.intent) as Listing["intent"], category: String(row.category ?? "general"), title: String(row.title ?? ""),
     priceText: text(row.price_text), city: text(row.city), area: text(row.area), phone: text(row.phone),
-    status: String(row.status) as Listing["status"], createdAt: String(row.created_at ?? ""),
+    status: String(row.status) as Listing["status"], createdAt: String(row.created_at ?? ""), sourceUrl: text(row.source_url),
   };
 }
+
+/** A web listing past its expiry date is no longer offered, even before a clean-up job marks it. */
+const live = (row: Row) => typeof row.expires_at !== "string" || Date.parse(row.expires_at) > Date.now();
 
 const PRICE_LABELS: Record<string, string> = { property: "Rent", phones: "Phones", electronics: "Electronics", vehicles: "Vehicles", furniture: "Furniture", jobs: "Wages offered", food: "Food", clothing: "Clothing" };
 
@@ -197,7 +205,7 @@ export class SupabaseConnectStore implements ConnectStore {
     const terms = query.words.map(orTerm).filter((word) => word.length >= 3);
     const clauses = [...terms.map((word) => `title.ilike.*${word}*`), ...terms.map((word) => `description.ilike.*${word}*`), ...(query.category ? [`category.eq.${orTerm(query.category)}`] : [])];
     if (clauses.length) builder = builder.or(clauses.join(","));
-    const found = rows(await builder.order("created_at", { ascending: false }).limit(Math.min(query.limit * 3, 30)), "Search listings").map(listing);
+    const found = rows(await builder.order("created_at", { ascending: false }).limit(Math.min(query.limit * 3, 30)), "Search listings").filter(live).map(listing);
     // Checked listings first, then the newest.
     return found.sort((a, b) => Number(b.status === "approved") - Number(a.status === "approved")).slice(0, query.limit);
   }
@@ -287,6 +295,18 @@ export class SupabaseConnectStore implements ConnectStore {
   async creditBalance(identityId: string): Promise<number> {
     return rows(await this.db.from("connect_credit_ledger").select("delta").eq("whatsapp_identity_id", identity(identityId)).limit(5000), "Read credits")
       .reduce((sum, row) => sum + (Number(row.delta) || 0), 0);
+  }
+
+  async benitaSearch(query: BenitaQuery): Promise<BenitaResult[]> {
+    const rpc = this.db.rpc;
+    if (!rpc) return [];
+    return await benitaSearch({ rpc: (fn, args) => rpc.call(this.db, fn, args) }, query);
+  }
+
+  async currentFacts(prefix: string | null = null): Promise<BenitaFact[]> {
+    const rpc = this.db.rpc;
+    if (!rpc) return [];
+    return await benitaFacts({ rpc: (fn, args) => rpc.call(this.db, fn, args) }, prefix);
   }
 
   async activity(identityId: string): Promise<IdentityActivity> {

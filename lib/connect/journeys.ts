@@ -97,8 +97,14 @@ function waLink(phone: string | null): string | null {
   return digits && digits.length >= 8 ? `wa.me/${digits}` : null;
 }
 
+function sourceHost(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try { return new URL(url).host.replace(/^www\./, ""); } catch { return null; }
+}
+
 function listingLine(listing: Listing, index: number): string {
-  const checked = listing.status === "approved" ? "Checked" : "Not yet checked";
+  const web = sourceHost(listing.sourceUrl);
+  const checked = listing.status === "approved" ? "Checked" : web ? `Found online (${web}), not yet checked` : "Not yet checked";
   const facts = [listing.priceText, [listing.area, listing.city].filter(Boolean).join(", ") || null].filter(Boolean).join(" · ");
   const contact = waLink(listing.phone);
   return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `Contact: ${contact} · ` : ""}${checked}`;
@@ -616,7 +622,7 @@ export class ConnectJourneys {
       const body = `${kind.empty}${place.city ? ` in ${place.city}` : ""}. Want me to post a request so people can find you?`;
       return { reply: body, interactive: buttons(body, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
     }
-    const lines = [`Here's what people have posted${place.city ? ` in ${place.city}` : ""}:`, "", ...results.map(listingLine), "", "Listings come from the community. Always see an item before you pay."];
+    const lines = [`Here's what people have posted${place.city ? ` in ${place.city}` : ""}:`, "", ...results.map(listingLine), "", results.some((item) => item.sourceUrl) ? "Listings come from the community and public websites. Always see an item before you pay." : "Listings come from the community. Always see an item before you pay."];
     const reply = lines.join("\n");
     return { reply, interactive: buttons(reply.length > 1000 ? `${results.length} results found. See the message above.` : reply, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
   }

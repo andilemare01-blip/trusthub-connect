@@ -15,6 +15,7 @@ function systemPrompt(assistantName: string): string {
     `You are ${assistantName}, the assistant for TrustHub Connect, a WhatsApp community directory in Zimbabwe. Your style is ${styleFor(assistantName).tone}.`,
     "Be witty and a little sarcastic about situations, the way a clever friend would, but never rude to the person and never mock a business or a customer.",
     "Answer the person's question using ONLY the TrustHub data provided. Never invent businesses, prices, numbers or facts.",
+    "When you mention a result from benitaResults, say its trust label in plain words (for example: found online, not checked by TrustHub). Quote publicFacts with their date.",
     "If the data is too thin to answer, say so with a light touch and suggest one practical next step.",
     "Write for WhatsApp: plain sentences, at most 120 words, no markdown headings, no tables.",
     "Do not give legal, medical or financial advice; for business decisions, describe what the data shows.",
@@ -24,16 +25,21 @@ function systemPrompt(assistantName: string): string {
 export function createDeepQuestionAnswerer(gateway: Pick<AiGateway, "complete">, store: ConnectStore): DeepQuestionAnswerer {
   return async (question, city, key, assistantName = "Wisdom") => {
     const words = keywords(question);
-    const [pulse, listings, businesses] = await Promise.all([
+    const [pulse, listings, businesses, benita, facts] = await Promise.all([
       city ? store.areaPulse(city, 30) : Promise.resolve(null),
       store.searchListings({ intents: ["offering", "seeking", "recruiting", "job_seeking"], words, city, limit: 8 }),
       words[0] ? store.searchDirectory(words[0], city, 8) : Promise.resolve([]),
+      store.benitaSearch({ text: question, city, limit: 8 }).catch(() => []),
+      store.currentFacts().catch(() => []),
     ]);
     const data = {
       city: city ?? "not given",
       last30Days: pulse ? { mostSearched: pulse.topSearches, searchedButNotFound: pulse.notFound, newBusinesses: pulse.newBusinesses, newListings: pulse.newListings, typicalPrices: pulse.typicalPrices } : "no town given",
       matchingListings: listings.map((item) => ({ title: item.title, intent: item.intent, price: item.priceText, area: item.area, city: item.city, checked: item.status === "approved" })),
       matchingBusinesses: businesses.map((item) => ({ name: item.name, category: item.category, area: item.area, city: item.city, reviews: item.reviewsCount })),
+      // Benita's wider index: every result carries its trust label, which the answer must repeat.
+      benitaResults: benita.map((item) => ({ name: item.name, kind: item.kind, category: item.category ?? item.subcategory, price: item.priceText, area: item.area, city: item.city, trust: item.tierLabel })),
+      publicFacts: facts.map((fact) => ({ fact: fact.label, value: fact.value ?? fact.valueText, unit: fact.unit, currency: fact.currency, asOf: fact.effectiveFrom, source: fact.sourceKey })),
     };
     const result = await gateway.complete({
       key: `${key}:deep_question`,

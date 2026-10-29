@@ -27,23 +27,40 @@ export const KEYS: Record<string, string> = {
 
 interface Place { name: string; lat: number; lon: number; kind: string }
 
-async function overpass(query: string, waitMs = 100_000): Promise<{ elements: Record<string, unknown>[] }> {
-  let last = "";
+/** Tries each public Overpass server in turn, each with its own time limit, inside one overall budget. */
+async function overpass(query: string, budgetMs: number, perServerMs: number): Promise<{ elements: Record<string, unknown>[] }> {
+  const failures: string[] = [];
   const started = Date.now();
   for (const endpoint of ENDPOINTS) {
-    const left = waitMs - (Date.now() - started);
-    if (left < 10_000) break;
+    const left = Math.min(perServerMs, budgetMs - (Date.now() - started));
+    if (left < 8_000) break;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), left);
     try {
       const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT }, body: "data=" + encodeURIComponent(query), signal: controller.signal });
-      clearTimeout(timer);
-      if (response.ok) return await response.json();
-      last = `${endpoint} ${response.status}`;
-    } catch (error) { clearTimeout(timer); last = `${endpoint} ${String(error).slice(0, 100)}`; }
+      if (response.ok) { const data = await response.json(); clearTimeout(timer); return data; }
+      failures.push(`${new URL(endpoint).host} HTTP ${response.status}`);
+    } catch (error) {
+      failures.push(`${new URL(endpoint).host} ${error instanceof Error && error.name === "AbortError" ? `no answer in ${Math.round(left / 1000)} s` : String(error).slice(0, 80)}`);
+    } finally { clearTimeout(timer); }
   }
-  throw new Error(`Overpass unavailable: ${last}`);
+  console.warn(JSON.stringify({ event: "benita.overpass_failed", failures }));
+  throw new Error(`Overpass unavailable: ${failures.join("; ")}`);
 }
+
+/** Towns and cities used to name a place's town when the live place lookup is slow. Coordinates are approximate centres. */
+const TOWNS: Place[] = ([
+  ["Harare", -17.829, 31.052, "city"], ["Chitungwiza", -18.012, 31.076, "city"], ["Epworth", -17.89, 31.147, "town"], ["Ruwa", -17.89, 31.245, "town"], ["Norton", -17.883, 30.7, "town"],
+  ["Bulawayo", -20.15, 28.583, "city"], ["Mutare", -18.971, 32.671, "city"], ["Gweru", -19.45, 29.817, "city"], ["Kwekwe", -18.928, 29.815, "city"], ["Kadoma", -18.333, 29.917, "city"],
+  ["Masvingo", -20.064, 30.828, "city"], ["Chinhoyi", -17.367, 30.2, "town"], ["Marondera", -18.185, 31.552, "town"], ["Bindura", -17.302, 31.331, "town"], ["Victoria Falls", -17.932, 25.831, "city"],
+  ["Hwange", -18.367, 26.5, "town"], ["Beitbridge", -22.217, 30.0, "town"], ["Zvishavane", -20.327, 30.067, "town"], ["Chegutu", -18.13, 30.141, "town"], ["Kariba", -16.517, 28.8, "town"],
+  ["Karoi", -16.81, 29.693, "town"], ["Rusape", -18.535, 32.135, "town"], ["Chiredzi", -21.05, 31.667, "town"], ["Redcliff", -19.033, 29.783, "town"], ["Shurugwi", -19.67, 30.0, "town"],
+  ["Chipinge", -20.188, 32.624, "town"], ["Nyanga", -18.217, 32.75, "town"], ["Plumtree", -20.483, 27.817, "town"], ["Gwanda", -20.939, 29.019, "town"], ["Lupane", -18.931, 27.807, "town"],
+  ["Mvurwi", -17.033, 30.85, "town"], ["Mount Darwin", -16.773, 31.584, "town"], ["Murehwa", -17.65, 31.783, "town"], ["Banket", -17.383, 30.4, "town"], ["Gokwe", -18.217, 28.933, "town"],
+  ["Chivhu", -19.021, 30.892, "town"], ["Mutoko", -17.397, 32.227, "town"], ["Kezi", -20.917, 28.467, "town"], ["Binga", -17.62, 27.34, "town"], ["Triangle", -21.033, 31.45, "town"],
+  ["Mashava", -20.05, 30.483, "town"], ["Shamva", -17.317, 31.567, "town"], ["Guruve", -16.65, 30.7, "town"], ["Chimanimani", -19.8, 32.867, "town"], ["Penhalonga", -18.9, 32.683, "town"],
+  ["Esigodini", -20.283, 28.933, "town"], ["Filabusi", -20.533, 29.283, "town"], ["Mberengwa", -20.483, 29.917, "town"], ["Zaka", -20.333, 31.467, "town"], ["Gutu", -19.65, 31.167, "town"],
+] as [string, number, number, string][]).map(([name, lat, lon, kind]) => ({ name, lat, lon, kind }));
 
 function km(aLat: number, aLon: number, bLat: number, bLon: number): number {
   const rad = Math.PI / 180, dLat = (bLat - aLat) * rad, dLon = (bLon - aLon) * rad;
@@ -54,11 +71,17 @@ function km(aLat: number, aLon: number, bLat: number, bLon: number): number {
 async function places(bbox: [number, number, number, number]): Promise<Place[]> {
   // Pad the cell so a shop near its edge still finds its town.
   const [s, w, n, e] = [bbox[0] - 0.4, bbox[1] - 0.4, bbox[2] + 0.4, bbox[3] + 0.4];
-  const data = await overpass(`[out:json][timeout:60];node[place~"^(city|town|village|suburb|neighbourhood|quarter)$"][name](${s},${w},${n},${e});out;`, 60_000);
-  return data.elements.map((el) => {
-    const tags = (el.tags ?? {}) as Record<string, string>;
-    return { name: tags.name, lat: el.lat as number, lon: el.lon as number, kind: tags.place };
-  }).filter((place) => place.name && Number.isFinite(place.lat));
+  try {
+    const data = await overpass(`[out:json][timeout:40];node[place~"^(city|town|village|suburb|neighbourhood)$"][name](${s},${w},${n},${e});out;`, 45_000, 25_000);
+    const live = data.elements.map((el) => {
+      const tags = (el.tags ?? {}) as Record<string, string>;
+      return { name: tags.name, lat: el.lat as number, lon: el.lon as number, kind: tags.place };
+    }).filter((place) => place.name && Number.isFinite(place.lat));
+    return live.some((place) => place.kind === "city" || place.kind === "town") ? live : [...live, ...TOWNS];
+  } catch {
+    // Without suburbs a place still gets its town, so a slow lookup never costs the whole cell.
+    return TOWNS;
+  }
 }
 
 function locate(lat: number, lon: number, all: Place[]): { city: string | null; area: string | null } {
@@ -106,7 +129,7 @@ export async function runOsm(key: string, tile: string): Promise<{ seen: number;
   const [s, w, n, e] = bbox;
   const union = filters.map((filter) => `nwr${filter}(area.zw)(${s},${w},${n},${e});`).join("");
   const [data, towns] = await Promise.all([
-    overpass(`[out:json][timeout:100];area["ISO3166-1"="ZW"][admin_level=2]->.zw;(${union});out center tags;`, 105_000),
+    overpass(`[out:json][timeout:90];area["ISO3166-1"="ZW"][admin_level=2]->.zw;(${union});out center tags;`, 125_000, 70_000),
     places(bbox),
   ]);
   const now = new Date().toISOString();

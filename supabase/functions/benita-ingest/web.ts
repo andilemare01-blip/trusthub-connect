@@ -229,6 +229,8 @@ export async function runWeb(sourceKey: string, budgetMs = 110_000): Promise<{ s
   const cfg = src.benita_config as unknown as WebConfig;
   if (!cfg.seeds?.length) throw new Error(`${sourceKey} has no seeds`);
 
+  // Claim the source first, so a second scheduler tick picks a different site instead of doubling up on this one.
+  await rest(`knowledge_sources?id=eq.${src.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ benita_last_run_at: new Date().toISOString() }) });
   const existing = await rest<{ id: string }[]>(`benita_crawl_queue?source_key=eq.${sourceKey}&select=id&limit=1`);
   let queued = 0;
   if (!existing.length) {
@@ -240,10 +242,15 @@ export async function runWeb(sourceKey: string, budgetMs = 110_000): Promise<{ s
     }
   }
 
-  const due = await rest<QueueRow[]>(`benita_crawl_queue?source_key=eq.${sourceKey}&status=eq.pending&next_fetch_at=lte.${new Date().toISOString()}&select=id,url,kind,attempts&order=kind.desc,next_fetch_at.asc&limit=${cfg.pages_per_run ?? 30}`);
-  let seen = 0, accepted = 0, rejected = 0;
+  let seen = 0, accepted = 0, rejected = 0, fetched = 0;
+  const limit = cfg.pages_per_run ?? 30;
+  // Keep pulling due work until the page limit or the time budget runs out: links found on one page are crawled in the same run.
+  while (fetched < limit && Date.now() - started < budgetMs) {
+  const due = await rest<QueueRow[]>(`benita_crawl_queue?source_key=eq.${sourceKey}&status=eq.pending&next_fetch_at=lte.${new Date().toISOString()}&select=id,url,kind,attempts&order=kind.desc,next_fetch_at.asc&limit=${Math.min(10, limit - fetched)}`);
+  if (!due.length) break;
   for (const item of due) {
     if (Date.now() - started > budgetMs) break;
+    fetched++;
     const rules = await robotsFor(item.url);
     if (!allowed(item.url, rules) || matchesAny(item.url, cfg.skip)) {
       await rest(`benita_crawl_queue?id=eq.${item.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: "skipped", error: "robots.txt or skip rule", fetched_at: new Date().toISOString() }) });
@@ -292,7 +299,7 @@ export async function runWeb(sourceKey: string, budgetMs = 110_000): Promise<{ s
     });
     await sleep(rules.delayMs);
   }
-  await rest(`knowledge_sources?id=eq.${src.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ benita_last_run_at: new Date().toISOString() }) });
+  }
   return { seen, accepted, rejected, queued };
 }
 

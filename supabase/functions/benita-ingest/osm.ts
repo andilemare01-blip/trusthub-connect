@@ -4,7 +4,10 @@
  * One run handles one tag key over one tile so it fits the function time limit.
  */
 import { rest, source, upsert } from "./db.ts";
-import { clean, searchText, USER_AGENT, zwPhone } from "./normalise.ts";
+import { clean, searchText, zwPhone } from "./normalise.ts";
+
+/** overpass-api.de refuses agents named like generic crawlers (HTTP 406), so Overpass gets a descriptive agent with a contact link. */
+const OVERPASS_AGENT = "TrustHubConnect-Benita/1.0 (+https://github.com/andilemare01-blip/trusthub-connect)";
 
 const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
 
@@ -37,7 +40,7 @@ async function overpass(query: string, budgetMs: number, perServerMs: number): P
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), left);
     try {
-      const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": USER_AGENT }, body: "data=" + encodeURIComponent(query), signal: controller.signal });
+      const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": OVERPASS_AGENT, accept: "application/json" }, body: "data=" + encodeURIComponent(query), signal: controller.signal });
       if (response.ok) { const data = await response.json(); clearTimeout(timer); return data; }
       failures.push(`${new URL(endpoint).host} HTTP ${response.status}`);
     } catch (error) {
@@ -163,5 +166,7 @@ export async function runOsm(key: string, tile: string): Promise<{ seen: number;
   }
   const accepted = await upsert("knowledge_records", rows, "source_id,source_record_id");
   await rest(`knowledge_sources?id=eq.${src.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ benita_last_run_at: now }) });
+  // Only a finished cell counts as done; a failed one is picked again after a short wait.
+  await rest(`benita_osm_cells?tile=eq.${encodeURIComponent(tile)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ last_run_at: now, last_records: accepted }) });
   return { seen: data.elements.length, accepted, rejected };
 }

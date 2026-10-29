@@ -93,7 +93,9 @@ function address(node: Record<string, unknown>): { address: string | null; city:
   if (typeof a === "string") return { address: clean(a, 200), city: zwCity(a), area: null };
   const parts = [a.streetAddress, a.addressLocality, a.addressRegion].map(text).filter(Boolean) as string[];
   const locality = text(a.addressLocality);
-  return { address: parts.join(", ") || null, city: zwCity(locality ?? parts.join(" ")) ?? (locality ? locality.slice(0, 60) : null), area: locality && !zwCity(locality) ? locality.slice(0, 60) : null };
+  // Sites often put the suburb in addressLocality and the town in addressRegion ("Borrowdale", "Harare North").
+  // A suburb is never stored as the town: an unknown town stays empty and is filled from the suburb later.
+  return { address: parts.join(", ") || null, city: zwCity(parts.join(" ")), area: locality && !zwCity(locality) ? locality.slice(0, 60) : null };
 }
 
 /** The first PostalAddress anywhere inside a node (listings often nest it under about, itemOffered or a seller). */

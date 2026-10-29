@@ -125,6 +125,13 @@ function insertIsRepeatable(values: SupabaseRow | SupabaseRow[] | undefined, opt
   return Object.keys(first).some((column) => GUARDED_UNIQUE_COLUMNS.has(column));
 }
 
+type WideSupabaseQuery = SupabaseQuery & {
+  neq(column: string, value: unknown): SupabaseQuery;
+  in(column: string, values: readonly unknown[]): SupabaseQuery;
+  gte(column: string, value: string): SupabaseQuery;
+  not(column: string, operator: string, value: unknown): SupabaseQuery;
+};
+
 class RetryingQuery implements SupabaseQuery {
   private readonly inner: SupabaseQuery;
   private readonly repeatable: boolean;
@@ -143,6 +150,14 @@ class RetryingQuery implements SupabaseQuery {
     return this.next(this.inner.upsert(values, options), insertIsRepeatable(values, options));
   }
   eq(column: string, value: unknown): SupabaseQuery { return this.next(this.inner.eq(column, value), this.repeatable); }
+  // Read filters. Each must be forwarded: a missing one throws "... is not a function" in production,
+  // and the caller's catch turns that into a generic apology.
+  neq(column: string, value: unknown): SupabaseQuery { return this.next(this.wide().neq(column, value), this.repeatable); }
+  in(column: string, values: readonly unknown[]): SupabaseQuery { return this.next(this.wide().in(column, values), this.repeatable); }
+  gte(column: string, value: string): SupabaseQuery { return this.next(this.wide().gte(column, value), this.repeatable); }
+  not(column: string, operator: string, value: unknown): SupabaseQuery { return this.next(this.wide().not(column, operator, value), this.repeatable); }
+  /** The real PostgREST builder has these filters; the narrow SupabaseQuery view omits them, as it does `or`. */
+  private wide(): WideSupabaseQuery { return this.inner as WideSupabaseQuery; }
   ilike(column: string, pattern: string): SupabaseQuery { return this.next(this.inner.ilike(column, pattern), this.repeatable); }
   /**
    * Forwards the combined-OR filter unchanged: a read filter, so it

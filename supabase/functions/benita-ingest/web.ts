@@ -131,7 +131,10 @@ interface Extracted { listings: Record<string, unknown>[]; businesses: Record<st
 export function extract(html: string, url: string, cfg: WebConfig, src: SourceRow, isDetail: boolean): Extracted {
   const now = new Date();
   const host = new URL(url).host;
-  const canonical = /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i.exec(html)?.[1] ?? url;
+  // A link to a site's home page identifies nothing; the page Benita actually read is the better link then.
+  const homepage = (link: string) => { try { return new URL(link, url).pathname.replace(/\/+$/, "") === ""; } catch { return true; } };
+  const declared = /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i.exec(html)?.[1];
+  const canonical = declared && !(homepage(declared) && !homepage(url)) ? declared : url;
   const nodes = jsonLd(html);
   const title = meta(html, "og:title") ?? clean(/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? null, 200) ?? clean(/<title>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? null, 200);
   const description = meta(html, "og:description") ?? meta(html, "description");
@@ -159,7 +162,7 @@ export function extract(html: string, url: string, cfg: WebConfig, src: SourceRo
     const name = text(node.name ?? node.title ?? node.headline);
     if (!name) continue;
     const where = address(node.address ? node : nestedAddress(node) ?? node);
-    const ownUrl = text(node.url) && /^https?:/.test(String(node.url)) ? String(node.url) : null;
+    const ownUrl = text(node.url) && /^https?:/.test(String(node.url)) && !homepage(String(node.url)) ? String(node.url) : null;
     const link = ownUrl ?? canonical;
     // A page-level phone belongs to a detail page's own item, never to every item on an index page.
     const offer0 = (Array.isArray(node.offers) ? node.offers[0] : node.offers) as Record<string, unknown> | undefined;

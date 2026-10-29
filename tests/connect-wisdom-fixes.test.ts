@@ -179,11 +179,13 @@ test("'Thanks' during a pending question is not swallowed by small talk", async 
   assert.equal(await engine.handle("Thanks", context, null), null, "the coordinator decides what 'Thanks' means mid-question");
 });
 
-test("every menu title fits WhatsApp's 24-character limit, and carries an emoji", () => {
+test("every menu title fits WhatsApp's 24-character limit; emoji lead every title except Community intelligence", () => {
   for (const row of MENU_ROWS) {
-    assert.ok([...row.title].length <= 24, row.title);
-    assert.match(row.title, /^\p{Extended_Pictographic}/u, `${row.title} starts with an emoji`);
+    // Measured the way clip() measures it, so the limit is enforced for real.
+    assert.ok(row.title.length <= 24, `${row.title} is ${row.title.length} characters`);
+    if (row.id !== "menu.area") assert.match(row.title, /^\p{Extended_Pictographic}/u, `${row.title} starts with an emoji`);
   }
+  assert.equal(MENU_ROWS.find((row) => row.id === "menu.area")?.title, "Community intelligence");
 });
 
 // ------------------------------------------------------------ listing titles

@@ -32,7 +32,7 @@ export const MENU_ROWS: readonly MenuRow[] = [
   { number: 4, id: "menu.buy_sell", section: "Buy, sell & work", title: "🛒 Buy or sell", description: "Post an item or find what you need" },
   { number: 5, id: "menu.jobs", section: "Buy, sell & work", title: "💼 Jobs", description: "Find work or hire someone" },
   { number: 6, id: "menu.houses", section: "Buy, sell & work", title: "🏠 Houses & rentals", description: "Rooms, cottages and houses by area" },
-  { number: 7, id: "menu.area", section: "My area", title: "📍 This week near me", description: "What's trending, in demand and new" },
+  { number: 7, id: "menu.area", section: "My area", title: "Community intelligence", description: "What's trending, in demand and new" },
   { number: 8, id: "menu.scam", section: "My area", title: "🚨 Scam check", description: "Check a number or seller before you pay" },
   { number: 9, id: "menu.ask", section: "Me", title: "💬 Ask Wisdom", description: "Any question. Simple searches are free" },
   { number: 10, id: "menu.profile", section: "Me", title: "👤 Profile & feedback", description: "Credits, your reviews, and send feedback" },

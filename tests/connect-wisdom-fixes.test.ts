@@ -198,3 +198,37 @@ test("messy listing descriptions become clean titles", async () => {
   assert.equal(listingTitle("Its a 2 room cottage $180 a month Waterfalls Harare"), "2 room cottage");
   assert.equal(listingTitle("Its an I Pad 2021 for sale $300 Chinhoyi"), "iPad 2021");
 });
+
+// ------------------------------------------------------- production database path
+
+test("the production database wrapper forwards every filter the Connect store uses", async () => {
+  const { createResilientDataClient } = await import("../lib/supabase/retry.ts");
+  const fake = { from: () => ({ select() { return this; }, eq() { return this; }, order() { return this; }, limit() { return this; }, then(resolve: (value: unknown) => unknown) { return Promise.resolve({ data: [], error: null }).then(resolve); } }) };
+  const query = createResilientDataClient(fake as never).from("anything") as unknown as Record<string, unknown>;
+  for (const method of ["select", "eq", "neq", "in", "ilike", "gte", "not", "or", "order", "limit"]) {
+    assert.equal(typeof query[method], "function", `${method} must exist on the production wrapper`);
+  }
+});
+
+test("reading reviews works through the production wrapper, not only the test store", async () => {
+  const { createResilientDataClient } = await import("../lib/supabase/retry.ts");
+  const { SupabaseConnectStore } = await import("../lib/connect/supabase-store.ts");
+  const tables: Record<string, Record<string, unknown>[]> = {
+    trusthub_connect_reviews: [{ id: "r1", rating: 4, review_text: "Crispy and fast", status: "published", verified_visit: true, created_at: "2026-10-28T10:00:00Z", directory_business_id: "b1" }],
+    businesses: [{ id: "b1", name: "Chicken Inn", category: "Food & Dining", city: "Chiredzi", area: null, phone: null, reviews_count: 1 }],
+  };
+  const builder = (table: string) => {
+    let rows = [...(tables[table] ?? [])];
+    const api: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "order", "limit", "gte", "ilike"]) api[method] = () => api;
+    api.in = (column: string, values: unknown[]) => { rows = rows.filter((row) => values.includes(row[column]) || column === "status"); return api; };
+    api.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(resolve);
+    return api;
+  };
+  const store = new SupabaseConnectStore(createResilientDataClient({ from: builder } as never) as never);
+  const found = await store.searchReviews({ terms: ["chicken"], city: "Chiredzi", limit: 5 });
+  assert.equal(found.length, 1);
+  assert.equal(found[0].business.name, "Chicken Inn");
+  const reply = await new ConnectJourneys(store).handle("Chicken inn chiredzi", context, { flow: "read_reviews", step: "which", data: {} });
+  assert.match(reply?.reply ?? "", /Crispy and fast/);
+});

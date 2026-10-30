@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./admin.module.css";
 
 type RangeKey = "today" | "7d" | "30d";
-type View = "overview" | "check" | "cards" | "health" | "try";
+type View = "founder" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
 type QueueKind = "reviews" | "listings" | "businesses" | "scams";
 
 interface Metrics {
@@ -100,7 +100,7 @@ function Login({ onSignedIn }: { onSignedIn: (token: string, expiresAt: number) 
 }
 
 function Console({ token, onSignOut }: { token: string; onSignOut: () => void }) {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("founder");
   const [range, setRange] = useState<RangeKey>("7d");
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +121,10 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
 
   const waiting = metrics ? metrics.toCheck.reviews + metrics.toCheck.listings + metrics.toCheck.businesses + metrics.toCheck.scamReports : 0;
   const nav: { key: View; label: string; badge?: number }[] = [
+    { key: "founder", label: "Founder" },
     { key: "overview", label: "Overview" },
+    { key: "people", label: "People" },
+    { key: "agents", label: "Agents" },
     { key: "check", label: "To check", badge: waiting },
     { key: "cards", label: "Review cards" },
     { key: "health", label: "System health" },
@@ -143,6 +146,9 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
       </aside>
       <main className={styles.main}>
         {error ? <p className={styles.error} role="alert">{error}</p> : null}
+        {view === "founder" ? <Founder api={api} /> : null}
+        {view === "people" ? <People api={api} /> : null}
+        {view === "agents" ? <Agents api={api} /> : null}
         {view === "overview" ? <Overview metrics={metrics} range={range} setRange={setRange} /> : null}
         {view === "check" ? <ToCheck api={api} onChanged={loadMetrics} counts={metrics?.toCheck ?? null} /> : null}
         {view === "cards" ? <Cards api={api} /> : null}
@@ -296,6 +302,127 @@ function TryWisdom({ api }: { api: Api }) {
   );
 }
 
+type FounderNumbers = Record<string, number | null>;
+type Person = { id: number; display_name: string | null; phone_number: string; joined_at: string; last_active: string | null; searches: number; reviews: number; listings: number; credits: number; agent: string | null; is_test: boolean };
+type Agent = { id: number; code: string; name: string; phone: string | null; active: boolean; link: string; dashboard: string; clicks: number; clicksWeek: number; joined: number; joinedWeek: number; activeWeek: number; searches: number; reviews: number; listings: number };
+const when = (iso: string | null) => iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Harare" }) : "—";
+
+/** The founder's home: the numbers that say whether TrustHub Connect is growing, and what to do about it. */
+function Founder({ api }: { api: Api }) {
+  const [numbers, setNumbers] = useState<FounderNumbers | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void api<{ numbers: FounderNumbers }>("/api/admin/people").then((body) => setNumbers(body.numbers)).catch((failure) => setError(failure instanceof Error ? failure.message : "Numbers unavailable.")); }, [api]);
+  const n = (key: string) => Number(numbers?.[key] ?? 0);
+  const aiUsed = n("aiCallsToday");
+  return (
+    <>
+      <header className={styles.head}><div><h1>Founder</h1><p className={styles.muted}>Everything that matters today. Add this page to your home screen: in your browser menu, tap &quot;Add to Home screen&quot;.</p></div></header>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      <section className={styles.kpis}>
+        <Kpi label="People" value={n("people")} note={`${n("peopleToday")} new today · ${n("peopleWeek")} this week`} />
+        <Kpi label="Active" value={n("activeToday")} note={`today · ${n("activeWeek")} this week`} />
+        <Kpi label="Named" value={n("named")} note="left a name or have a profile" />
+        <Kpi label="Searches" value={n("searchesWeek")} note={`this week · ${n("foundRateWeek")}% found something`} warn={n("foundRateWeek") < 50 && n("searchesWeek") > 0} />
+        <Kpi label="Reviews" value={n("reviews")} note={`${n("listingsByPeople")} listings posted by people`} />
+        <Kpi label="Agents" value={n("agents")} note={`${n("referred")} people joined through agents`} />
+      </section>
+      <div className={styles.row}>
+        <section className={styles.panel} style={{ flex: "1 1 320px" }}>
+          <h2>Wisdom&apos;s AI today</h2>
+          <Line label="AI calls (last 24 hours)" value={aiUsed} />
+          <Line label="Failed calls" value={n("aiFailedToday")} />
+          <p className={styles.muted}>{aiUsed >= 40 ? "Close to the free limit of 50 a day. Buy $10 of OpenRouter credit once to raise it to 1,000 a day." : "The free plan allows 50 a day; $10 of OpenRouter credit raises it to 1,000."}</p>
+        </section>
+        <section className={styles.panel} style={{ flex: "1 1 320px" }}>
+          <h2>Benita&apos;s knowledge</h2>
+          <Line label="Places and providers" value={n("places")} />
+          <Line label="Homes, cars and jobs listed" value={n("webListings")} />
+          <Line label="News this week" value={n("news")} />
+          <Line label="Database size" value={`${n("dbMb")} MB of 500 MB (free plan)`} />
+        </section>
+      </div>
+    </>
+  );
+}
+
+/** Everyone who has used Connect: who they are, when they came, what they did and who brought them. */
+function People({ api }: { api: Api }) {
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [showTests, setShowTests] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void api<{ people: Person[] }>("/api/admin/people").then((body) => setPeople(body.people)).catch((failure) => setError(failure instanceof Error ? failure.message : "People unavailable.")); }, [api]);
+  const shown = (people ?? []).filter((person) => showTests || !person.is_test);
+  return (
+    <>
+      <header className={styles.head}><div><h1>People</h1><p className={styles.muted}>Everyone who has messaged TrustHub Connect, most recently active first.</p></div>
+        <label className={styles.muted}><input type="checkbox" checked={showTests} onChange={(event) => setShowTests(event.target.checked)} /> Show test chats</label></header>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      <section className={styles.panel}>
+        {shown.length ? (
+          <div className={styles.tableWrap}><table className={styles.table}>
+            <thead><tr><th>Name</th><th>WhatsApp</th><th>Joined</th><th>Last active</th><th>Searches</th><th>Reviews</th><th>Listings</th><th>Credits</th><th>Agent</th></tr></thead>
+            <tbody>{shown.map((person) => (
+              <tr key={person.id}><td>{person.display_name ?? <span className={styles.muted}>No name yet</span>}</td><td>{person.phone_number}</td><td>{when(person.joined_at)}</td><td>{when(person.last_active)}</td>
+                <td>{person.searches}</td><td>{person.reviews}</td><td>{person.listings}</td><td>{person.credits}</td><td>{person.agent ?? "—"}</td></tr>
+            ))}</tbody>
+          </table></div>
+        ) : <p className={styles.muted}>{people ? "Nobody yet." : "Loading…"}</p>}
+      </section>
+    </>
+  );
+}
+
+/** Agents: add one, give them their link and private page, and see who brings people in. */
+function Agents({ api }: { api: Api }) {
+  const [agents, setAgents] = useState<Agent[] | null>(null);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [made, setMade] = useState<{ code: string; link: string; dashboard: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try { setAgents((await api<{ agents: Agent[] }>("/api/admin/agents")).agents); } catch (failure) { setError(failure instanceof Error ? failure.message : "Agents unavailable."); setAgents([]); }
+  }, [api]);
+  useEffect(() => { void load(); }, [load]);
+  async function add() {
+    setError(null);
+    try { setMade(await api<{ code: string; link: string; dashboard: string }>("/api/admin/agents", { method: "POST", body: JSON.stringify({ name, phone }) })); setName(""); setPhone(""); void load(); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : "The agent could not be added."); }
+  }
+  async function toggle(agent: Agent) {
+    try { await api("/api/admin/agents", { method: "POST", body: JSON.stringify({ id: agent.id, active: !agent.active }) }); void load(); } catch { /* shown on reload */ }
+  }
+  async function copy(text: string, label: string) { try { await navigator.clipboard.writeText(text); setCopied(label); setTimeout(() => setCopied(null), 2000); } catch { setCopied(null); } }
+  return (
+    <>
+      <header className={styles.head}><div><h1>Agents</h1><p className={styles.muted}>Each agent gets a link to share and a private page showing everyone who joined through them.</p></div></header>
+      {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {copied ? <p className={styles.muted} role="status">{copied}</p> : null}
+      <div className={styles.row}>
+        <section className={styles.panel} style={{ flex: "2 1 560px" }}>
+          <h2>Leaderboard</h2>
+          {agents?.length ? (
+            <div className={styles.tableWrap}><table className={styles.table}>
+              <thead><tr><th>Agent</th><th>Joined</th><th>Active this week</th><th>Link taps</th><th>Searches</th><th>Reviews</th><th><span className={styles.srOnly}>Actions</span></th></tr></thead>
+              <tbody>{agents.map((agent) => (
+                <tr key={agent.id}><td>{agent.name}<div className={styles.small}>{agent.code}{agent.active ? "" : " · paused"}</div></td><td>{agent.joined}<div className={styles.small}>{agent.joinedWeek} this week</div></td><td>{agent.activeWeek}</td><td>{agent.clicks}</td><td>{agent.searches}</td><td>{agent.reviews}</td>
+                  <td className={styles.rowActions}><button type="button" className={styles.linkBtn} onClick={() => void copy(agent.link, `${agent.name}'s link copied`)}>Copy link</button><button type="button" className={styles.linkBtn} onClick={() => void copy(agent.dashboard, `${agent.name}'s private page copied`)}>Copy their page</button><button type="button" className={styles.linkBtn} onClick={() => void toggle(agent)}>{agent.active ? "Pause" : "Activate"}</button></td></tr>
+              ))}</tbody>
+            </table></div>
+          ) : <p className={styles.muted}>{agents ? "No agents yet. Add the first one." : "Loading…"}</p>}
+        </section>
+        <section className={styles.panel} style={{ flex: "1 1 320px" }}>
+          <h2>Add an agent</h2>
+          <label className={styles.field}>Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} /></label>
+          <label className={styles.field}>Phone (optional)<input value={phone} onChange={(event) => setPhone(event.target.value)} maxLength={20} /></label>
+          <button type="button" className={styles.primary} onClick={() => void add()} disabled={name.trim().length < 2}>Add agent</button>
+          {made ? <div className={styles.note}><p><b>Code {made.code}</b></p><p>Their link to share: {made.link}</p><p>Their private page (send only to them): {made.dashboard}</p></div> : null}
+        </section>
+      </div>
+    </>
+  );
+}
+
 function Kpi({ label, value, note, warn }: { label: string; value: number; note: string; warn?: boolean }) {
   return <div className={styles.kpi}><span className={styles.kpiLabel}>{label}</span><span className={warn ? styles.kpiWarn : styles.kpiValue}>{number(value)}</span><span className={styles.kpiNote}>{note}</span></div>;
 }
@@ -394,6 +521,17 @@ function Cards({ api }: { api: Api }) {
     catch (failure) { setError(failure instanceof Error ? failure.message : "The card could not be updated."); }
   }
 
+  /** Programs a blank NFC card with this card's link: tap "Write to card", then hold the card to the back of the phone (Chrome on Android). */
+  async function writeNfc(url: string, code: string) {
+    const Reader = (window as unknown as { NDEFReader?: new () => { write(message: { records: { recordType: string; data: string }[] }): Promise<void> } }).NDEFReader;
+    if (!Reader) { setError("Writing NFC cards works in Chrome on an Android phone. Open this admin page there, then tap Write to card again."); return; }
+    try {
+      setError(null); setCopied(`Hold card ${code} to the back of your phone now…`);
+      await new Reader().write({ records: [{ recordType: "url", data: url }] });
+      setCopied(`Card ${code} is programmed ✓ Tap it with any phone to test.`);
+    } catch (failure) { setCopied(null); setError(failure instanceof Error ? `The card wasn't written: ${failure.message}` : "The card wasn't written. Try again."); }
+  }
+
   async function copy(text: string, label: string) {
     try { await navigator.clipboard.writeText(text); setCopied(label); setTimeout(() => setCopied(null), 2000); } catch { setCopied(null); }
   }
@@ -404,6 +542,7 @@ function Cards({ api }: { api: Api }) {
     <>
       <header className={styles.head}><div><h1>Review cards</h1><p className={styles.muted}>One card per business. Each card has its own link and QR code, and every tap is counted.</p></div></header>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {copied && copied.length > 6 ? <p className={styles.muted} role="status">{copied}</p> : null}
       <div className={styles.row}>
         <section className={styles.panel} style={{ flex: "2 1 560px" }}>
           <h2>All cards</h2>
@@ -421,6 +560,7 @@ function Cards({ api }: { api: Api }) {
                       <td>{card.taps}</td><td>{card.reviews}</td><td>{card.newUsers}</td>
                       <td className={styles.rowActions}>
                         <a className={styles.linkBtn} href={`/cards/${card.code}/print`} target="_blank" rel="noreferrer">Print</a>
+                        <button type="button" className={styles.linkBtn} onClick={() => void writeNfc(card.links.nfc, card.code)}>Write to card</button>
                         {card.status === "active" ? <button type="button" className={styles.linkBtn} onClick={() => void setStatus(card, "paused")}>Pause</button> : card.status === "paused" ? <button type="button" className={styles.linkBtn} onClick={() => void setStatus(card, "active")}>Activate</button> : null}
                       </td>
                     </tr>

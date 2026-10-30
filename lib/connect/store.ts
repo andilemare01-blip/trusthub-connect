@@ -184,6 +184,14 @@ export interface AreaPulse {
   typicalPrices: { label: string; median: number; currency: string; samples: number }[];
 }
 
+/** What the profile screen shows about a person. */
+export interface PersonSummary {
+  name: string | null;
+  joinedAt: string | null;
+  recentSearches: { text: string; city: string | null; at: string }[];
+  agent: string | null;
+}
+
 /** A headline Benita collected for Community intelligence. */
 export interface NewsItem { title: string; summary: string | null; url: string; source: string; publishedAt: string | null; topics: string[] }
 
@@ -220,6 +228,11 @@ export interface ConnectStore {
   countSearches(city: string, category: string, days: number): Promise<number>;
   lastCity(identityId: string): Promise<string | null>;
   areaPulse(city: string, days: number): Promise<AreaPulse>;
+  /** People: save the name someone wants to be called, and note that they were asked. */
+  savePersonName?(identityId: string, name: string): Promise<void>;
+  markNameAsked?(identityId: string): Promise<void>;
+  /** People: who they are and what they've done, for the profile screen. */
+  personSummary?(identityId: string): Promise<PersonSummary>;
   /** Community intelligence: recent headlines about prices, money, jobs and services, optionally for a town or a question. */
   news?(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }): Promise<NewsItem[]>;
   /** Community intelligence: money facts with their change, typical rents, car prices and jobs for a town. */
@@ -366,6 +379,16 @@ export class InMemoryConnectStore implements ConnectStore {
     }).slice(0, query.limit ?? 5);
   }
   async currentFacts(prefix: string | null = null) { return this.facts.filter((fact) => !prefix || fact.key.startsWith(prefix)); }
+  names = new Map<string, string>();
+  namesAsked = new Set<string>();
+  async savePersonName(identityId: string, name: string) { this.names.set(identityId, name); this.namesAsked.add(identityId); }
+  async markNameAsked(identityId: string) { this.namesAsked.add(identityId); }
+  async personSummary(identityId: string): Promise<PersonSummary> {
+    return {
+      name: this.names.get(identityId) ?? null, joinedAt: null, agent: null,
+      recentSearches: this.searches.filter((entry) => entry.identityId === identityId).slice(-5).reverse().map((entry) => ({ text: entry.queryText ?? entry.category ?? "", city: entry.city, at: entry.createdAt })),
+    };
+  }
   newsItems: NewsItem[] = [];
   townSignals: TownSignals | null = null;
   async news(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }) {

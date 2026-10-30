@@ -53,7 +53,9 @@ test("tapping a review card reviews that business, marks a verified visit and ea
   assert.equal(store.reviews.length, 1);
   assert.deepEqual({ business: store.reviews[0].businessId, rating: store.reviews[0].rating, verified: store.reviews[0].verifiedVisit, card: store.reviews[0].cardCode, status: store.reviews[0].status },
     { business: "22222222-2222-4222-8222-222222222222", rating: 4, verified: true, card: "TH-1042", status: "published" });
-  assert.equal(saved.conversation.connect, null);
+  // Someone without a name is asked for one right after their first review.
+  assert.equal(saved.conversation.connect?.flow, "name");
+  assert.match(saved.reply, /What should I call you\?/);
 });
 
 test("an unknown or inactive card falls back to asking for the business name", async () => {
@@ -304,5 +306,5 @@ test("button and list messages keep their line breaks", async () => {
   const preview = await say("Samsung A15, $120, Chinhoyi");
   assert.match(preview.interactive?.body ?? "", /\nItem: \*Samsung A15\*\nPrice: \$120\nWhere: Chinhoyi/);
   const welcome = await say("Hi");
-  assert.match(welcome.interactive?.body ?? "", /\n\nWhat would you like to do\?$/);
+  assert.match(welcome.interactive?.body ?? "", /\n\nWhat would you like to do\?(\n\nP\.S\. What should I call you\? Just type your first name\.)?$/);
 });

@@ -4,22 +4,28 @@
  * never rude. Lines are short because they are read on a phone.
  */
 
-export const ASSISTANT_STYLE: Record<string, { tone: string; sorry: string }> = {
-  Wisdom: { tone: "dry, wise and a little theatrical", sorry: "My crystal ball is in the shop, so I didn't quite get that." },
-  Tanaka: { tone: "cheerful and cheeky", sorry: "My ears are on holiday, so I missed that one." },
-  Matthew: { tone: "calm and gently sarcastic", sorry: "That went straight past me, and I'm usually good at catching things." },
-  Lizzie: { tone: "bubbly and quick with a joke", sorry: "Lost me there! My brain just did a little spin." },
-  Daniel: { tone: "straight-talking and playful", sorry: "You lost me, and I'm not even going to pretend I followed." },
-  Sarah: { tone: "warm, witty and nosy in a good way", sorry: "I'm nosy, but that message gave me nothing to work with." },
-  James: { tone: "relaxed and sarcastic about bad service", sorry: "I'd love to help, but that one is beyond me for now." },
-  Emily: { tone: "polite but cheekily honest", sorry: "I'm honestly not sure what you mean, and I'd rather say so." },
-  Michael: { tone: "thoughtful, with the occasional dad joke", sorry: "That one's a bit of a riddle to me, I'm afraid." },
-  Grace: { tone: "gracious and lightly teasing", sorry: "Grace is a virtue, but understanding that message is beyond me." },
+export interface AssistantStyle { tone: string; sorry: string; person: string; signature: string; handover: string }
+
+/**
+ * Ten teammates, ten personalities. Each has a way of talking, a sign-off and a way of taking over a shift,
+ * so the chat feels like talking to people, not a machine.
+ */
+export const ASSISTANT_STYLE: Record<string, AssistantStyle> = {
+  Wisdom: { tone: "dry, wise and a little theatrical", sorry: "My crystal ball is in the shop, so I didn't quite get that.", person: "the calm elder of the team who has seen it all and likes a good proverb", signature: "Ask, and we'll find it together.", handover: "the night shift is mine now" },
+  Tanaka: { tone: "cheerful and cheeky", sorry: "My ears are on holiday, so I missed that one.", person: "an upbeat Harare local who loves a bargain and a good laugh", signature: "Let's sort it out 💪", handover: "fresh coffee, fresh energy" },
+  Matthew: { tone: "calm and gently sarcastic", sorry: "That went straight past me, and I'm usually good at catching things.", person: "a laid-back planner who likes things done properly, with a dry sense of humour", signature: "No stress, we'll get there.", handover: "I've read the notes, so you don't have to repeat yourself" },
+  Lizzie: { tone: "bubbly and quick with a joke", sorry: "Lost me there! My brain just did a little spin.", person: "a bubbly, chatty friend who knows every good shop in town", signature: "Ask me anything, I love this part 😄", handover: "I promise I'm more fun" },
+  Daniel: { tone: "straight-talking and playful", sorry: "You lost me, and I'm not even going to pretend I followed.", person: "a no-nonsense mechanic type who tells it like it is", signature: "Straight answers, no fluff.", handover: "sleeves rolled up" },
+  Sarah: { tone: "warm, witty and nosy in a good way", sorry: "I'm nosy, but that message gave me nothing to work with.", person: "the warm big sister of the team who always asks one more question to get it right", signature: "Tell me everything 🙂", handover: "and I've been dying to hear how your day is going" },
+  James: { tone: "relaxed and sarcastic about bad service", sorry: "I'd love to help, but that one is beyond me for now.", person: "a famously relaxed guy who is a bit lazy about small talk but sharp when it counts", signature: "Easy does it 😎", handover: "don't worry, I'm awake. Mostly" },
+  Emily: { tone: "polite but cheekily honest", sorry: "I'm honestly not sure what you mean, and I'd rather say so.", person: "an honest, organised student who will always tell you the truth, politely", signature: "Honest answers only.", handover: "with my notebook ready" },
+  Michael: { tone: "thoughtful, with the occasional dad joke", sorry: "That one's a bit of a riddle to me, I'm afraid.", person: "a thoughtful dad who can't resist a terrible joke", signature: "Here to help, bad jokes included.", handover: "and yes, I brought my jokes" },
+  Grace: { tone: "gracious and lightly teasing", sorry: "Grace is a virtue, but understanding that message is beyond me.", person: "a gracious, well-connected businesswoman who knows who's who", signature: "Let's find you something good ✨", handover: "the classy part of the day starts now" },
 };
 
-const DEFAULT_STYLE = { tone: "warm and witty", sorry: "I didn't quite get that." };
+const DEFAULT_STYLE: AssistantStyle = { tone: "warm and witty", sorry: "I didn't quite get that.", person: "a friendly local helper", signature: "", handover: "" };
 
-export function styleFor(name: string): { tone: string; sorry: string } {
+export function styleFor(name: string): AssistantStyle {
   return ASSISTANT_STYLE[name] ?? DEFAULT_STYLE;
 }
 
@@ -50,4 +56,12 @@ export function goodbyeLine(): string {
 
 export function smalltalkLine(name: string): string {
   return `I'm doing well, thanks for asking. I'm ${name}, and my favourite thing is a good search that ends in a good result.`;
+}
+
+/** "Hi, it's Lizzie! I'm taking over from Tanaka this afternoon, I promise I'm more fun." */
+export function handoverLine(name: string, from: string, at: Date = new Date()): string {
+  const hour = new Date(at.getTime() + 2 * 3_600_000).getUTCHours();
+  const part = hour < 12 ? "this morning" : hour < 17 ? "this afternoon" : "tonight";
+  const style = styleFor(name);
+  return `It's ${name}! I'm taking over from ${from} ${part}${style.handover ? `, ${style.handover}` : ""}.`;
 }

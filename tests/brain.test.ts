@@ -34,3 +34,29 @@ test("a follow-up carries the last exchange, so the conversation continues", asy
   const moved = await engine.handle("plumber in Avondale", context, next!.state);
   assert.equal(moved?.pass, true, "a plain search after an answer goes back to the normal search");
 });
+
+import { plausibleName } from "../lib/connect/journeys.ts";
+
+test("names are recognised however people give them, and requests are never taken as names", () => {
+  assert.equal(plausibleName("Andile"), "Andile");
+  assert.equal(plausibleName("my name is tendai moyo"), "Tendai Moyo");
+  assert.equal(plausibleName("call me Tino"), "Tino");
+  for (const text of ["9", "plumber in Avondale", "Harare", "yes", "hi", "I need a hotel in Masvingo please"]) assert.equal(plausibleName(text), null, text);
+});
+
+test("a new person is asked for a name once, it is saved, and the profile shows it with their searches", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  const engine = new ConnectJourneys(store, undefined, () => new Date(NOW));
+  const ctx: ConnectContext = { identityId: "401", profileName: null, providerMessageId: "wamid.name.1", assistantName: "Grace" };
+  const hello = await engine.handle("Hi", ctx, null);
+  assert.match(hello?.reply ?? "", /What should I call you\? Just type your first name\./);
+  const saved = await engine.handle("Andile", ctx, hello!.state);
+  assert.match(saved?.reply ?? "", /Nice to meet you, Andile! You're saved/);
+  assert.equal(store.names.get("401"), "Andile");
+  await store.logSearch({ identityId: "401", journey: "find", category: "plumber", city: "Harare", area: null, queryText: "plumber in Avondale", resultCount: 3, sourceMessageId: "s1" });
+  const profile = await engine.handle("10", { ...ctx, profileName: "Andile" }, null);
+  assert.match(profile?.reply ?? "", /\*Andile's TrustHub profile\*/);
+  assert.match(profile?.reply ?? "", /Your recent searches\*\n• plumber in Avondale · Harare/);
+  const menuChoice = await engine.handle("9", ctx, hello!.state);
+  assert.doesNotMatch(menuChoice?.reply ?? "", /Nice to meet you/, "a menu number is never taken as a name");
+});

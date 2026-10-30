@@ -12,6 +12,7 @@
 import { rest, rpc, source, upsert } from "./db.ts";
 import { clean, searchText, zwPhone, zwPhonesIn } from "./normalise.ts";
 import { classify, TOWNS } from "./osm.ts";
+import { fromHits, slug, type Found, type WebHit } from "./webhits.ts";
 
 export interface LiveResult { saved: number; map: number; web: number; engine: string | null; town: string | null; error?: string; notes?: string[] }
 
@@ -19,11 +20,7 @@ export interface LiveResult { saved: number; map: number; web: number; engine: s
 let notes: string[] = [];
 
 const KIND_KEY = /^(shop|amenity|tourism|office|craft|healthcare|leisure)$/;
-/** Pages that list many places, or that we do not take facts from, are not one business. */
-const NOT_ONE_PLACE = /\b(best|top \d+|cheap(est)?|list of|directory|things to do|near me|search results?|vacanc|jobs?|for sale|to let|for rent|reviews of|compare|deals)\b|\b\d+\s+(hotels|lodges|places|properties)\b|^(hotels|lodges|accommodation)\s+in\b/i;
-const SKIP_HOSTS = /(^|\.)(facebook|instagram|tiktok|x|twitter|linkedin|youtube|pinterest|wikipedia)\.(com|org)$/i;
 
-const slug = (text: string) => text.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 const safeWord = (text: string) => text.toLocaleLowerCase().replace(/[^a-z0-9 &'-]/g, "").trim();
 const titleCase = (text: string) => text.replace(/\b\p{L}/gu, (c) => c.toLocaleUpperCase());
 
@@ -117,7 +114,6 @@ async function fromMap(town: { name: string; lat: number; lon: number }, words: 
   });
 }
 
-interface WebHit { title: string; url: string; content: string }
 
 async function tavily(query: string, ms: number): Promise<WebHit[] | null> {
   const key = await secret("TAVILY_API_KEY");
@@ -143,7 +139,6 @@ async function exa(query: string, ms: number): Promise<WebHit[] | null> {
   return (body.results ?? []).map((r) => ({ title: r.title ?? "", url: r.url ?? "", content: r.text ?? "" }));
 }
 
-interface Found { name: string; phone: string | null; area: string | null; url: string; website: string | null }
 
 /** The AI account's web search, asked for named businesses as JSON. */
 async function openrouter(what: string, town: string, ms: number): Promise<Found[] | null> {
@@ -169,25 +164,6 @@ async function openrouter(what: string, town: string, ms: number): Promise<Found
   });
 }
 
-/** One business per search result, or nothing when the page is a list, a social site, or about another town. */
-export function fromHits(hits: WebHit[], town: string, words: string[]): Found[] {
-  const out = new Map<string, Found>();
-  for (const hit of hits) {
-    let host: string;
-    try { host = new URL(hit.url).host.replace(/^www\./, ""); } catch { continue; }
-    if (SKIP_HOSTS.test(host)) continue;
-    const title = clean(hit.title, 200) ?? "";
-    if (!title || NOT_ONE_PLACE.test(title)) continue;
-    const all = `${title} ${hit.content}`.toLocaleLowerCase();
-    if (!all.includes(town.toLocaleLowerCase())) continue;
-    if (!words.some((word) => all.includes(word))) continue;
-    const name = title.replace(/^(booking\.com|tripadvisor|expedia|hotels\.com)\s*[:|-]\s*/i, "").split(/\s+[|–—-]\s+|\s*,\s+(?=[A-Z])|\s*\(/)[0].replace(/\s*updated \d{4}.*$/i, "").trim();
-    if (name.length < 4 || name.length > 80 || NOT_ONE_PLACE.test(name)) continue;
-    const aggregator = /(booking|tripadvisor|expedia|hotels|agoda|trip|kayak|google|yellow|zimplaza|zimbabweyp|cylex)\./i.test(host);
-    out.set(slug(name), { name, phone: zwPhonesIn(hit.content)[0] ?? null, area: null, url: hit.url, website: aggregator ? null : `https://${host}` });
-  }
-  return [...out.values()].slice(0, 6);
-}
 
 async function liveSource(): Promise<{ id: string; license: string | null }> {
   try { return await source("benita_live_web"); } catch { /* first use: create it */ }

@@ -1,3 +1,4 @@
+import { isAdviceQuestion } from "../connect/brain.ts";
 import type { NormalizedRequest } from "../answer-resolution/types.ts";
 import type { DetectedContribution } from "../contributions/detection.ts";
 import { detectContribution } from "../contributions/detection.ts";
@@ -118,7 +119,8 @@ export class AiAssistedUnderstandingProvider implements ConversationUnderstandin
   async understand(text: string, options: UnderstandOptions = {}): Promise<StructuredUnderstanding> {
     const base = await this.fallback.understand(text);
     if (!this.gateway.enabled) return base;
-    const eligible = base.answerability === "unknown" && base.urgency === "normal" && base.escalation === "none"
+    // Advice questions go straight to Wisdom's brain, which reads them itself; interpreting them first only adds a wait.
+    const eligible = !isAdviceQuestion(text) && base.answerability === "unknown" && base.urgency === "normal" && base.escalation === "none"
       && text.trim().split(/\s+/).length >= 4 && text.length <= 600 && !GREETING_OR_ACK.test(text.trim());
     if (!eligible) return { ...base, aiProviderStatus: "not_needed" };
     const result = await this.gateway.complete({

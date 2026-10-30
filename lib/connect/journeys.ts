@@ -627,7 +627,9 @@ export class ConnectJourneys {
       : /\b(rent|to let|lease|per month|monthly|p\/m)\b/i.test(query) ? "rent"
       : /\b(buy|for sale|purchase|own)\b/i.test(query) ? "buy"
       : budget && budget.amount <= 15_000 ? "rent" : null;
-    const results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, area: place.area, maxPrice: budget?.amount ?? null, deal, limit: 5 });
+    // A home search leaves out offices and shops unless they were asked for.
+    const exclude = kind.journey === "houses" && !/\b(office|commercial|warehouse|industrial|shop|retail)\b/i.test(query) ? "\\m(office|offices|commercial|warehouse|industrial|shop|retail)\\M" : null;
+    const results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, area: place.area, maxPrice: budget?.amount ?? null, deal, exclude, limit: 5 });
     await this.store.logSearch({ identityId: context.identityId, journey: kind.journey, category: category ?? words[0] ?? null, city: place.city, area: place.area, queryText: clip(query, 200), resultCount: results.length, sourceMessageId: context.providerMessageId ? `${context.providerMessageId}:${kind.journey}` : null }).catch(() => undefined);
     const nextState: ConnectJourneyState = { flow: "listing_search", step: "results", data: { kind: String(state.data.kind), query } };
     const requestLabel = kind.journey === "jobs" ? "Post I'm available" : "Post a request";
@@ -635,7 +637,9 @@ export class ConnectJourneys {
       const body = `${kind.empty}${place.city ? ` in ${place.city}` : ""}. Want me to post a request so people can find you?`;
       return { reply: body, interactive: buttons(body, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
     }
-    const lines = [`Here's what people have posted${place.city ? ` in ${place.city}` : ""}:`, "", ...results.map(listingLine), "", results.some((item) => item.sourceUrl) ? "Listings come from the community and public websites. Always see an item before you pay." : "Listings come from the community. Always see an item before you pay."];
+    const where = place.area ? ` in ${place.area}` : place.city ? ` in ${place.city}` : "";
+    const overBudget = budget && results.every((item) => item.withinBudget === false);
+    const lines = [overBudget ? `Nothing at about ${budget!.priceText}${where} yet. Here are the closest I found:` : `Here's what I found${where}:`, "", ...results.map(listingLine), "", results.some((item) => item.sourceUrl) ? "Listings come from the community and public websites. Always see an item before you pay." : "Listings come from the community. Always see an item before you pay."];
     const reply = lines.join("\n");
     return { reply, interactive: buttons(reply.length > 1000 ? `${results.length} results found. See the message above.` : reply, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
   }

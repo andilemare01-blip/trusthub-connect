@@ -207,6 +207,19 @@ export class SupabaseConnectStore implements ConnectStore {
   }
 
   async searchListings(query: ListingQuery): Promise<Listing[]> {
+    // The database searches every live listing (area, budget, rent or buy, words); the query below is the fallback.
+    const rpc = this.db.rpc;
+    if (rpc) {
+      const result = await rpc.call(this.db, "benita_listings", {
+        p_intents: query.intents, p_category: query.category ?? null, p_city: query.city ?? null, p_area: query.area ?? null,
+        p_words: query.words.filter((word) => word.length >= 2).slice(0, 8), p_max_price: query.maxPrice ?? null, p_deal: query.deal ?? null,
+        p_limit: query.limit, p_exclude: query.exclude ?? null,
+      });
+      if (!result.error && Array.isArray(result.data)) {
+        return (result.data as Row[]).map((row) => ({ ...listing(row), withinBudget: row.within_budget !== false }));
+      }
+      console.error(JSON.stringify({ event: "connect.listing_rpc_failed", detail: result.error?.message?.slice(0, 200) ?? "no rows" }));
+    }
     let builder = this.db.from("trusthub_connect_listings").select(LISTING_COLUMNS).in("intent", query.intents).in("status", ["approved", "pending"]);
     if (query.city) builder = builder.ilike("city", like(query.city));
     const terms = query.words.map(orTerm).filter((word) => word.length >= 3);

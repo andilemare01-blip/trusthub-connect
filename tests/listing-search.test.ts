@@ -27,3 +27,15 @@ test("$1200 in Borrowdale finds Borrowdale rentals near that budget, not houses 
   const roomier = await store.searchListings({ intents: ["offering"], words: [], category: "property", city: "Harare", area: "Borrowdale", maxPrice: 1400, deal: "rent", limit: 5 });
   assert.deepEqual(roomier.map((item) => item.id), ["b", "a"], "closest to the budget first");
 });
+
+test("when nothing fits the budget, the closest above it are shown and flagged; office space stays out of a home search", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.listings.push(
+    home("x", "3-Bed Townhouse for Rent in Borrowdale", "Borrowdale", "$1,500"),
+    home("y", "Vacant Office Space To Let In Borrowdale West", "Borrowdale West", "$1,000"),
+    home("z", "House to Rent in Borrowdale Brooke", "Borrowdale Brooke", "$3,500"),
+  );
+  const found = await store.searchListings({ intents: ["offering"], words: [], category: "property", city: "Harare", area: "Borrowdale", maxPrice: 1000, deal: "rent", exclude: "\\m(office|offices|commercial)\\M", limit: 5 });
+  assert.deepEqual(found.map((item) => item.id), ["x"], "the $1,500 townhouse is the closest; the office is left out; $3,500 is too far");
+  assert.equal(found[0].withinBudget, false);
+});

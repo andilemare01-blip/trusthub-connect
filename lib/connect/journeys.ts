@@ -18,6 +18,7 @@ import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseChec
 import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
 import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
 import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
+import { benitaLine } from "../benita/index.ts";
 import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
 import { brainFallback, isAdviceQuestion, isOpenQuestion } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
@@ -293,15 +294,20 @@ export class ConnectJourneys {
       case "add_business": return await this.addBusiness(state, text, context);
       case "buy_sell":
         if (chose(text, "btn.sell", "selling", "i'm selling", "sell")) return this.startListing("sell");
-        if (chose(text, "btn.buy", "buying", "i'm looking", "buy", "looking")) return this.startSearch("buy");
+        if (chose(text, "btn.buy", "buying", "i'm looking", "im looking", "buy", "looking")) return this.startSearch("buy");
+        if (text.trim().length >= 4) return (await this.naturalListing(text, context)) ?? await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "buy" } }, text, context);
         return { reply: "Tap *I'm selling* or *I'm looking*, or type MENU to go back.", interactive: buttons("Are you buying or selling?", [["btn.sell", "I'm selling"], ["btn.buy", "I'm looking"]]), state, action: "clarify" };
       case "jobs":
-        if (chose(text, "btn.find_work", "find work", "work", "job", "looking for work")) return this.startSearch("jobs");
+        if (chose(text, "btn.find_work", "find work", "work", "job", "jobs", "looking for work", "i'm looking", "im looking", "looking", "find", "search")) return this.startSearch("jobs");
         if (chose(text, "btn.hire", "i'm hiring", "hiring", "hire")) return this.startListing("hire");
+        // Typing the search itself ("driver jobs in Harare") skips the question.
+        if (text.trim().length >= 4 && !/\b(hiring|hire|employ)\b/i.test(text)) return await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "jobs" } }, text, context);
         return { reply: "Tap *Find work* or *I'm hiring*, or type MENU to go back.", interactive: buttons("Are you looking for work, or hiring?", [["btn.find_work", "Find work"], ["btn.hire", "I'm hiring"]]), state, action: "clarify" };
       case "houses":
-        if (chose(text, "btn.find_place", "find a place", "find", "looking")) return this.startSearch("houses");
+        if (chose(text, "btn.find_place", "find a place", "find", "looking", "i'm looking", "im looking", "search", "rent", "renting", "buy", "buying")) return this.startSearch("houses");
         if (chose(text, "btn.list_place", "list a place", "list", "offering", "rent out")) return this.startListing("rent_out");
+        // Typing the search itself ("cottage in Avondale under $500") skips the question.
+        if (text.trim().length >= 4 && !/\b(renting out|letting out|to let|list)\b/i.test(text)) return await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "houses" } }, text, context);
         return { reply: "Tap *Find a place* or *List a place*, or type MENU to go back.", interactive: buttons("Are you looking for a place, or offering one?", [["btn.find_place", "Find a place"], ["btn.list_place", "List a place"]]), state, action: "clarify" };
       case "listing": return await this.listing(state, text, context);
       case "listing_search": return await this.listingSearch(state, text, context);
@@ -675,6 +681,14 @@ export class ConnectJourneys {
     await this.store.logSearch({ identityId: context.identityId, journey: kind.journey, category: category ?? words[0] ?? null, city: place.city, area: place.area, queryText: clip(query, 200), resultCount: results.length, sourceMessageId: context.providerMessageId ? `${context.providerMessageId}:${kind.journey}` : null }).catch(() => undefined);
     const nextState: ConnectJourneyState = { flow: "listing_search", step: "results", data: { kind: String(state.data.kind), query } };
     const requestLabel = kind.journey === "jobs" ? "Post I'm available" : "Post a request";
+    if (!results.length && kind.journey === "buy_sell" && words.length) {
+      // No one is selling it second-hand: point to shops that sell it, from Benita's directory.
+      const shops = await this.store.benitaSearch({ text: words.join(" "), city: place.city, limit: 3, kinds: ["place"] }).catch(() => []);
+      if (shops.length) {
+        const body = [`Nobody has posted ${clip(words.join(" "), 30)}${place.city ? ` in ${place.city}` : ""} for sale yet. These shops may have it:`, "", ...shops.map((shop, index) => benitaLine(shop, index)), "", "Or post a request and sellers can find you."].join("\n");
+        return { reply: body, interactive: buttons(body, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
+      }
+    }
     if (!results.length) {
       const body = `${kind.empty}${place.city ? ` in ${place.city}` : ""}. Want me to post a request so people can find you?`;
       return { reply: body, interactive: buttons(body, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };

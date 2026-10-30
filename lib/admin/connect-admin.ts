@@ -36,26 +36,37 @@ const head = { count: "exact" as const, head: true };
  * Signs in with TrustHub's own Supabase Auth (email and password) and only
  * hands back a session when the account is in admin_users.
  */
-export async function adminPasswordLogin(email: string, password: string): Promise<{ ok: true; token: string; expiresAt: number } | { ok: false; status: number; error: string }> {
+export type AdminSession = { ok: true; token: string; refreshToken: string | null; expiresAt: number };
+
+export async function adminPasswordLogin(email: string, password: string): Promise<AdminSession | { ok: false; status: number; error: string }> {
+  return await adminTokenGrant("password", { email, password }, "That email and password don't match a TrustHub account.");
+}
+
+/** Swaps a refresh token for a fresh session, so the admin app stays signed in on a trusted phone. */
+export async function adminRefresh(refreshToken: string): Promise<AdminSession | { ok: false; status: number; error: string }> {
+  return await adminTokenGrant("refresh_token", { refresh_token: refreshToken }, "Please sign in again.");
+}
+
+async function adminTokenGrant(grant: "password" | "refresh_token", payload: Record<string, string>, failure: string): Promise<AdminSession | { ok: false; status: number; error: string }> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return { ok: false, status: 503, error: "Sign-in is unavailable: the server is missing its Supabase configuration." };
   let response: Response;
   try {
-    response = await fetch(`${url.replace(/\/+$/, "")}/auth/v1/token?grant_type=password`, {
-      method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify({ email, password }), cache: "no-store",
+    response = await fetch(`${url.replace(/\/+$/, "")}/auth/v1/token?grant_type=${grant}`, {
+      method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify(payload), cache: "no-store",
     });
   } catch {
     return { ok: false, status: 503, error: "Sign-in is temporarily unavailable." };
   }
-  const body = await response.json().catch(() => null) as { access_token?: unknown; expires_in?: unknown } | null;
-  if (!response.ok || typeof body?.access_token !== "string") return { ok: false, status: 401, error: "That email and password don't match a TrustHub account." };
+  const body = await response.json().catch(() => null) as { access_token?: unknown; refresh_token?: unknown; expires_in?: unknown } | null;
+  if (!response.ok || typeof body?.access_token !== "string") return { ok: false, status: 401, error: failure };
   const client = createAdminServerClient();
   if (!client) return { ok: false, status: 503, error: "Sign-in is unavailable." };
   const auth = await authorizeAdminRequest(`Bearer ${body.access_token}`, client);
   if (!auth.ok) return { ok: false, status: auth.status, error: auth.reason === "not_admin" ? "This account is not a TrustHub administrator." : "Sign-in is temporarily unavailable." };
   const seconds = typeof body.expires_in === "number" ? body.expires_in : 3600;
-  return { ok: true, token: body.access_token, expiresAt: Date.now() + seconds * 1000 };
+  return { ok: true, token: body.access_token, refreshToken: typeof body.refresh_token === "string" ? body.refresh_token : null, expiresAt: Date.now() + seconds * 1000 };
 }
 
 /** Sends TrustHub's normal password-reset email. Always reports success so the form never reveals which emails exist. */
@@ -68,24 +79,30 @@ export async function adminPasswordReset(email: string, redirectTo?: string): Pr
   await fetch(`${url.replace(/\/+$/, "")}/auth/v1/recover${query}`, { method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify({ email }), cache: "no-store" }).catch(() => undefined);
 }
 
-/** Sets a new password using the one-time access token from a reset email's link. */
-export async function adminSetPassword(accessToken: string, password: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return { ok: false, status: 503, error: "Password reset is unavailable right now." };
-  let response: Response;
+/**
+ * Sets a new password using the one-time token from a reset email's link: the token proves who the person is,
+ * then the password is changed with the server's own key, and the person is signed straight in.
+ */
+export async function adminSetPassword(accessToken: string, password: string): Promise<AdminSession | { ok: false; status: number; error: string }> {
+  const client = createAdminServerClient() as unknown as {
+    auth: {
+      getUser(token: string): Promise<{ data: { user: { id: string; email?: string | null } | null }; error: unknown }>;
+      admin: { updateUserById(id: string, attributes: { password: string }): Promise<{ error: { message?: string } | null }> };
+    };
+  } | null;
+  if (!client) return { ok: false, status: 503, error: "Password reset is unavailable right now." };
+  let user: { id: string; email?: string | null } | null = null;
   try {
-    response = await fetch(`${url.replace(/\/+$/, "")}/auth/v1/user`, {
-      method: "PUT", headers: { apikey: key, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ password }), cache: "no-store",
-    });
+    const found = await client.auth.getUser(accessToken);
+    user = found.error ? null : found.data.user;
   } catch {
     return { ok: false, status: 503, error: "Password reset is temporarily unavailable." };
   }
-  if (response.ok) return { ok: true };
-  if (response.status === 401 || response.status === 403) return { ok: false, status: 401, error: "This reset link has expired or was already used. Ask for a new one from the sign-in page." };
-  const body = await response.json().catch(() => null) as { msg?: unknown; message?: unknown } | null;
-  const reason = typeof body?.msg === "string" ? body.msg : typeof body?.message === "string" ? body.message : "";
-  return { ok: false, status: 400, error: reason ? `Couldn't set that password: ${reason}` : "Couldn't set that password. Try a longer one." };
+  if (!user?.id) return { ok: false, status: 401, error: "This reset link has expired or was already used. Ask for a new one from the sign-in page." };
+  const updated = await client.auth.admin.updateUserById(user.id, { password }).catch(() => ({ error: { message: "" } }));
+  if (updated.error) return { ok: false, status: 400, error: updated.error.message ? `Couldn't set that password: ${updated.error.message}` : "Couldn't set that password. Try a longer one." };
+  if (!user.email) return { ok: false, status: 200, error: "Password saved. Please sign in." };
+  return await adminPasswordLogin(user.email.toLowerCase(), password);
 }
 
 const LABEL: Record<string, string> = { find: "Find a business", review: "Rate or review", buy_sell: "Buy or sell", jobs: "Jobs", houses: "Houses & rentals" };

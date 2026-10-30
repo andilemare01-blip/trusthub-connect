@@ -44,27 +44,62 @@ const QUEUES: { key: QueueKind; label: string; approve: string; reject: string; 
   { key: "scams", label: "Scam reports", approve: "Confirm", reject: "Dismiss", empty: "No open scam reports." },
 ];
 
-function readSession(): string {
-  if (typeof window === "undefined") return "";
+type StoredSession = { token: string; refreshToken?: string | null; expiresAt: number };
+
+/** The admin session lives on this device until "Sign out", and renews itself quietly before it expires. */
+function readSession(): StoredSession | null {
+  if (typeof window === "undefined") return null;
   try {
-    const stored = JSON.parse(sessionStorage.getItem(TOKEN_KEY) ?? "null") as { token?: string; expiresAt?: number } | null;
-    return stored?.token && (stored.expiresAt ?? 0) > Date.now() ? stored.token : "";
-  } catch { return ""; }
+    const stored = JSON.parse(localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY) ?? "null") as StoredSession | null;
+    return stored?.token ? stored : null;
+  } catch { return null; }
+}
+function saveSession(session: StoredSession | null) {
+  try {
+    if (session) localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
+    else localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch { /* private mode: the session simply lasts for this visit */ }
+}
+async function renewSession(refreshToken: string): Promise<StoredSession | null> {
+  try {
+    const response = await fetch("/api/admin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshToken }) });
+    if (!response.ok) return null;
+    const body = await response.json() as StoredSession;
+    return body.token ? body : null;
+  } catch { return null; }
 }
 
 const number = (value: number | null | undefined) => (value === null || value === undefined ? "n/a" : value.toLocaleString());
 
 export default function AdminPage() {
-  const [token, setToken] = useState("");
+  const [session, setSession] = useState<StoredSession | null>(null);
   const [ready, setReady] = useState(false);
-  useEffect(() => { setToken(readSession()); setReady(true); }, []);
-  const signOut = useCallback(() => { sessionStorage.removeItem(TOKEN_KEY); setToken(""); }, []);
+  const accept = useCallback((next: StoredSession | null) => { saveSession(next); setSession(next); }, []);
+  useEffect(() => {
+    const stored = readSession();
+    if (stored && stored.expiresAt - Date.now() > 60_000) { setSession(stored); setReady(true); return; }
+    if (stored?.refreshToken) {
+      void renewSession(stored.refreshToken).then((next) => { accept(next); setReady(true); });
+      return;
+    }
+    accept(null);
+    setReady(true);
+  }, [accept]);
+  // Renew a few minutes before the session runs out, so the console never signs you out mid-task.
+  useEffect(() => {
+    if (!session?.refreshToken) return;
+    const wait = Math.max(30_000, session.expiresAt - Date.now() - 5 * 60_000);
+    const timer = window.setTimeout(() => { void renewSession(session.refreshToken as string).then((next) => { if (next) accept(next); }); }, wait);
+    return () => window.clearTimeout(timer);
+  }, [session, accept]);
+  const signOut = useCallback(() => accept(null), [accept]);
   if (!ready) return null;
-  if (!token) return <Login onSignedIn={(value, expiresAt) => { sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ token: value, expiresAt })); setToken(value); }} />;
-  return <Console token={token} onSignOut={signOut} />;
+  if (!session) return <Login onSignedIn={(next) => accept(next)} />;
+  return <Console token={session.token} onSignOut={signOut} />;
 }
 
-function Login({ onSignedIn }: { onSignedIn: (token: string, expiresAt: number) => void }) {
+function Login({ onSignedIn }: { onSignedIn: (session: StoredSession) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,7 +113,7 @@ function Login({ onSignedIn }: { onSignedIn: (token: string, expiresAt: number) 
       const body = await response.json().catch(() => ({}));
       if (!response.ok) setMessage({ kind: "error", text: body.error ?? "Sign-in failed." });
       else if (reset) setMessage({ kind: "info", text: body.message });
-      else onSignedIn(body.token, body.expiresAt);
+      else onSignedIn({ token: body.token, refreshToken: body.refreshToken ?? null, expiresAt: body.expiresAt });
     } catch { setMessage({ kind: "error", text: "Sign-in is temporarily unavailable." }); }
     setBusy(false);
   }

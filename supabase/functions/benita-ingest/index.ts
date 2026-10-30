@@ -22,6 +22,7 @@ import { runFacts } from "./facts.ts";
 import { gaps, live } from "./live.ts";
 import { DATASETS, peekHdx, runHdx } from "./hdx.ts";
 import { runNews } from "./news.ts";
+import { simulate } from "./simulate.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 
@@ -112,6 +113,8 @@ Deno.serve(async (req) => {
         if (!DATASETS[dataset]) return json({ error: "dataset unknown", datasets: Object.keys(DATASETS) }, 400);
         return json({ job: await background(`hdx_${dataset}`, { dataset }, () => runHdx(dataset).then(syncAfter)) }, 202);
       }
+      case "simulate":
+        return json(await simulate((body.conversations ?? []) as { phone: string; messages: string[] }[], typeof body.base === "string" ? body.base : undefined));
       case "news":
         return json({ job: await background("benita_news", {}, () => runNews()) }, 202);
       case "hdx_peek":

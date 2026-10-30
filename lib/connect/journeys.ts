@@ -645,7 +645,8 @@ export class ConnectJourneys {
     const query = text.slice(0, 200);
     const place = parsePlace(query);
     const words = keywords(query).filter((word) => !SHOPPING_WORDS.has(word.toLocaleLowerCase()));
-    const category = kind.category ?? (categorise(query) === "general" ? null : categorise(query));
+    // When the item is named ("Toyota Hilux"), the name decides; a broad category ("vehicles") would let any Toyota in.
+    const category = kind.category ?? (words.length ? null : categorise(query) === "general" ? null : categorise(query));
     const budget = parsePrice(query);
     // For homes, a monthly-sized budget means renting; words like "buy" or "for sale" mean buying.
     const deal = kind.journey !== "houses" ? null
@@ -763,9 +764,11 @@ export class ConnectJourneys {
         this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
         this.store.news ? this.store.news({ text: question, town: city, limit: 3 }).catch(() => []) : Promise.resolve([]),
       ]);
-      body = brainFallback(question, city, pulse, signals, news);
+      // A follow-up to advice ("what about Bulawayo?") is still advice, for the new place.
+      const basis = earlier && isAdviceQuestion(earlier.question) ? `${earlier.question} ${question}` : question;
+      body = brainFallback(basis, city, pulse, signals, news);
       // Without the AI and without any matching data, say nothing here: the normal "try this" help is more useful.
-      if (body.startsWith("I haven't seen anything") && !isAdviceQuestion(question)) return null;
+      if (body.startsWith("I haven't seen anything") && !isAdviceQuestion(basis)) return null;
     }
     const reply = `${body}\n\n_Ask me a follow-up, or tap Community intelligence for ${city}'s latest._`;
     return { reply, interactive: buttons(reply, [["menu.area", "Community intel"], ["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: { flow: "brain", step: "followup", data: { question: clip(question, 300), answer: clip(body, 900), city } }, action: "answer" };

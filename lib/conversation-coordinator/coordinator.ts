@@ -648,7 +648,7 @@ export class ConversationCoordinator {
     }
     // A results screen (search results, Community intelligence, a brain answer) is an answer, not an open question,
     // so a later "Bulawayo" is never mistaken for the reply to an old search.
-    const nextState: RuntimeState = result.state && result.action !== "answer" ? "clarification_needed" : result.state ? "resolved" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
+    const nextState: RuntimeState = result.state && result.action !== "answer" ? "clarification_needed" : result.state ? "ready_for_request" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
     conversation.state = nextState;
     conversation.lastAction = result.action;
     conversation.updatedAt = at;

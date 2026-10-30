@@ -12,6 +12,6 @@ export async function POST(request: NextRequest) {
   if (!accessToken) return NextResponse.json({ error: "This reset link is incomplete. Ask for a new one from the sign-in page." }, { status: 400, headers: noStore });
   if (password.length < 8) return NextResponse.json({ error: "Use at least 8 characters." }, { status: 400, headers: noStore });
   const result = await adminSetPassword(accessToken, password);
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status, headers: noStore });
-  return NextResponse.json({ ok: true }, { headers: noStore });
+  if (!result.ok) return NextResponse.json({ error: result.error, saved: result.status === 200 || result.status === 403 }, { status: result.status === 200 ? 200 : result.status, headers: noStore });
+  return NextResponse.json({ ok: true, token: result.token, refreshToken: result.refreshToken, expiresAt: result.expiresAt }, { headers: noStore });
 }

@@ -32,7 +32,11 @@ export default function ResetPassword() {
       const response = await fetch("/api/admin/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessToken: token, password }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) setMessage({ kind: "error", text: body.error ?? "Couldn't set that password." });
-      else setDone(true);
+      else if (body.token) {
+        // Signed straight in: the admin app picks this session up, so there is nothing more to type.
+        try { localStorage.setItem("trusthub-admin-session", JSON.stringify({ token: body.token, refreshToken: body.refreshToken ?? null, expiresAt: body.expiresAt })); } catch { /* sign in by hand instead */ }
+        window.location.replace("/admin");
+      } else setDone(true);
     } catch { setMessage({ kind: "error", text: "Password reset is temporarily unavailable." }); }
     setBusy(false);
   }

@@ -130,7 +130,8 @@ export class AiGateway {
         body: JSON.stringify({
           model,
           temperature: 0,
-          max_tokens: config.maxOutputTokens,
+          // Free models cost nothing, so they get room to think before answering; paid models keep the strict limit.
+          max_tokens: config.inputUsdPerMillion === 0 && config.outputUsdPerMillion === 0 ? config.maxOutputTokens + 2500 : config.maxOutputTokens,
           // Free "thinking" models can spend the whole budget reasoning and return no answer: keep reasoning short and out of the reply.
           reasoning: { effort: "low", exclude: true },
           messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }],

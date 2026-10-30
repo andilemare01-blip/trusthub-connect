@@ -33,7 +33,49 @@ export const ZIMBABWE_TOWNS = [
   "Harare", "Bulawayo", "Chitungwiza", "Mutare", "Gweru", "Kwekwe", "Kadoma", "Masvingo", "Chinhoyi", "Marondera",
   "Norton", "Chegutu", "Bindura", "Beitbridge", "Victoria Falls", "Hwange", "Kariba", "Rusape", "Zvishavane", "Chiredzi",
   "Ruwa", "Epworth", "Karoi", "Gokwe", "Shurugwi", "Redcliff", "Plumtree", "Chipinge", "Mazowe", "Banket", "Gwanda", "Mvurwi",
+  "Nyanga", "Lupane", "Murehwa", "Mount Darwin", "Shamva", "Triangle", "Kezi", "Filabusi", "Mutoko", "Chivhu", "Chimanimani", "Binga",
 ] as const;
+
+/** Everyday names and abbreviations people type for a town. */
+const TOWN_ALIASES: Record<string, string> = {
+  "vic falls": "Victoria Falls", vicfalls: "Victoria Falls", byo: "Bulawayo", "que que": "Kwekwe", chitown: "Chitungwiza", "chi town": "Chitungwiza",
+  hre: "Harare", "beit bridge": "Beitbridge", bb: "Beitbridge", "mt darwin": "Mount Darwin", "fort victoria": "Masvingo",
+};
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const held = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+      previous = held;
+    }
+  }
+  return row[b.length];
+}
+
+/**
+ * The Zimbabwean town someone meant, forgiving spelling ("beightbridge",
+ * "masvigo", "vic falls"), or null when the word is not close to any town.
+ */
+export function correctTown(typed: string | null | undefined): string | null {
+  const text = (typed ?? "").toLocaleLowerCase().replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (text.length < 3) return null;
+  const exact = ZIMBABWE_TOWNS.find((town) => town.toLocaleLowerCase() === text) ?? TOWN_ALIASES[text];
+  if (exact) return exact;
+  if (SUBURB_TOWN[text]) return null; // a suburb is placed by its own table, never "corrected" into a town
+  const squashed = text.replace(/ /g, "");
+  let best: { town: string; distance: number } | null = null, tied = false;
+  for (const town of ZIMBABWE_TOWNS) {
+    const distance = editDistance(squashed, town.toLocaleLowerCase().replace(/ /g, ""));
+    if (!best || distance < best.distance) { best = { town, distance }; tied = false; }
+    else if (distance === best.distance) tied = true;
+  }
+  const allowed = squashed.length <= 5 ? 1 : squashed.length <= 8 ? 2 : 3;
+  return best && !tied && best.distance <= allowed ? best.town : null;
+}
 
 /** Suburbs that unambiguously belong to one town, so "Avondale" alone means Harare. */
 const SUBURB_TOWN: Record<string, string> = {
@@ -60,7 +102,8 @@ export function parsePlace(text: string): ParsedPlace {
   if (town) return { city: town, area: null };
   const named = /\b(?:in|at|around|near|from)\s+([\p{L}][\p{L}\s'-]{1,30}?)(?:\s*,\s*([\p{L}][\p{L}\s'-]{1,30}?))?\s*(?:$|[.,;!?]|\s(?:for|under|below|with|and|at|budget)\b)/iu.exec(text);
   if (!named) return { city: null, area: null };
-  return named[2] ? { city: titleCase(named[2].trim()), area: titleCase(named[1].trim()) } : { city: titleCase(named[1].trim()), area: null };
+  const townOf = (raw: string) => correctTown(raw) ?? titleCase(raw.trim());
+  return named[2] ? { city: townOf(named[2]), area: titleCase(named[1].trim()) } : { city: townOf(named[1]), area: null };
 }
 
 /**

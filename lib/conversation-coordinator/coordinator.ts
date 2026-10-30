@@ -14,11 +14,12 @@ import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { ConnectJourneys, type ConnectContext, type ConnectReply } from "../connect/journeys.ts";
 import { InMemoryConnectStore, type ConnectStore } from "../connect/store.ts";
 import { clip, clipText, menuInteractive } from "../connect/menu.ts";
-import { parsePlace } from "../connect/parse.ts";
+import { correctTown, parsePlace } from "../connect/parse.ts";
 import { unclearLine } from "../connect/persona.ts";
 import { suggestRoutes, type RouteSuggestion } from "../connect/intent-classifier.ts";
 import type { ConnectRoute } from "../connect/intent-routes.ts";
-import { benitaReply, factIntent, factReply, type BenitaResult } from "../benita/index.ts";
+import { benitaLine, benitaReply, factIntent, factReply, type BenitaResult } from "../benita/index.ts";
+import type { EvidenceItem } from "../answer-resolution/types.ts";
 import { databaseFilterTerms, serviceMatchIntent } from "../discovery/service-taxonomy.ts";
 
 /** The journey a suggested route opens, as a menu row or a button. */
@@ -101,9 +102,43 @@ export function continueClarifiedRequest(pending: NormalizedRequest, reply: stri
 export function withKnownTown(request: NormalizedRequest): NormalizedRequest {
   const typed = request.location?.city?.trim();
   if (!typed) return request;
+  // A misspelt town ("beightbridge") is searched as the town that was meant.
+  const corrected = correctTown(typed);
+  if (corrected && corrected !== typed) request = { ...request, location: { ...request.location, city: corrected, country: request.location?.country ?? "Zimbabwe" } };
+  if (corrected) return request;
   const place = parsePlace(typed);
   if (!place.city || !place.area || place.city.toLocaleLowerCase() === typed.toLocaleLowerCase()) return request;
   return { ...request, location: { ...request.location, city: place.city, area: request.location?.area ?? place.area, country: request.location?.country ?? "Zimbabwe" } };
+}
+
+/** The words that mean what was asked for: "hotel" also means lodge, motel, guest house. */
+export function requestTerms(request: NormalizedRequest): string[] {
+  const intent = request.category ? serviceMatchIntent(request.category, request.serviceConcept) : null;
+  const terms = intent ? databaseFilterTerms(intent, 8) : { substrings: [], words: [] };
+  return [...new Set([request.category ?? "", ...terms.substrings, ...terms.words].map((term) => term.toLocaleLowerCase().trim()).filter((term) => term.length >= 3))];
+}
+
+/**
+ * True when a directory result is actually the kind of thing asked for. Its category or services must say so;
+ * a name only counts on a whole, specific word, so "Chicken Inn" is not a hotel.
+ */
+export function evidenceMatchesRequest(item: EvidenceItem, request: NormalizedRequest): boolean {
+  const intent = request.category ? serviceMatchIntent(request.category, request.serviceConcept) : null;
+  const terms = intent ? databaseFilterTerms(intent, 8) : { substrings: [], words: [] };
+  const own = (request.category ?? "").toLocaleLowerCase().split(/[^\p{L}]+/u).filter((word) => word.length >= 4);
+  const long = [...new Set([...terms.substrings, ...own].map((term) => term.toLocaleLowerCase()))];
+  const described = `${item.category ?? ""} ${(item.businessDetails?.services ?? []).join(" ")}`.toLocaleLowerCase();
+  if (long.some((term) => described.includes(term))) return true;
+  if (terms.words.some((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(described))) return true;
+  const name = (item.name ?? "").toLocaleLowerCase();
+  return long.some((term) => term.length >= 4 && name.includes(term));
+}
+
+const nameKey = (name: string) => name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** The light, every-time invitation that turns each answer into more data. */
+export function communityAsk(request: NormalizedRequest): string {
+  return `Know a good ${request.category ?? "one"} in ${request.location?.city ?? "your area"} that isn't here? Tap *Add a business* and help the next person.`;
 }
 
 /** Closes a results message; a later "yes" or "no" still records the outcome through the existing confirmation path. */
@@ -395,9 +430,22 @@ export class ConversationCoordinator {
     const discovery = searched?.category && searched.location?.city && (searched.questionType === "business_discovery" || searched.questionType === "provider_recommendation");
     // Nothing in the TrustHub directory: Benita's wider index (OpenStreetMap, public directories, web listings) answers instead of a dead end.
     const emptyDirectory = !!discovery && !!resolution && (resolution.status === "unresolved" || (resolution.status === "community_needed" && resolution.evidence.length === 0));
-    const wider = emptyDirectory ? await this.benitaForRequest(searched!) : [];
-    if (wider.length) {
-      reply = `${benitaReply(wider, searched!.category!, searched!.location!.city!)}\n\n${OUTCOME_FOLLOW_UP}`;
+    // Benita is asked on every directory search, not only empty ones. A directory result that is off-topic
+    // (a restaurant called "Chicken Inn" for "hotel") does not count as an answer.
+    const directoryListings = resolution?.evidence.filter((item) => item.kind === "listing") ?? [];
+    const onTopic = discovery ? directoryListings.filter((item) => evidenceMatchesRequest(item, searched!)) : directoryListings;
+    const offTopicOnly = !!discovery && directoryListings.length > 0 && onTopic.length === 0;
+    let wider = discovery && resolution ? await this.benitaForRequest(searched!) : [];
+    if (!wider.length && (emptyDirectory || offTopicOnly) && this.connect.store.benitaLive) {
+      // Nothing stored anywhere: Benita looks it up live (open map, then the web) and saves what it finds for the next person.
+      const added = await this.connect.store.benitaLive({ text: searched!.category!, city: searched!.location!.city!, terms: requestTerms(searched!) }).catch(() => 0);
+      if (added > 0) wider = await this.benitaForRequest(searched!);
+    }
+    const own = new Set(onTopic.map((item) => nameKey(item.name ?? "")));
+    const extra = wider.filter((found) => !own.has(nameKey(found.name))).slice(0, 3);
+    const benitaLeads = (emptyDirectory || offTopicOnly) && wider.length > 0;
+    if (benitaLeads) {
+      reply = `${benitaReply(wider, searched!.category!, searched!.location!.city!)}\n\n${communityAsk(searched!)}\n\n${OUTCOME_FOLLOW_UP}`;
       interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["menu.add_business", "Add a business"]]);
       action = "answer";
       nextState = "answer_uncertain";
@@ -407,13 +455,17 @@ export class ConversationCoordinator {
     } else if (action === "ask_community_permission") {
       interactive = withButtons(reply, [["btn.yes", "Yes, ask them"], ["btn.no", "No thanks"]]);
     }
-    if (resolution && (resolution.status === "answered" || resolution.status === "partially_answered") && action === "answer" && resolution.evidence.length) {
+    if (!benitaLeads && resolution && (resolution.status === "answered" || resolution.status === "partially_answered") && action === "answer" && resolution.evidence.length) {
       const opening = acknowledgement(searched, resolution);
-      reply = `${opening ? `${opening}\n\n` : ""}${reply}\n\n${OUTCOME_FOLLOW_UP}`;
+      // TrustHub's own results stay first; Benita adds what else it knows underneath, each with its trust label.
+      const more = discovery && extra.length
+        ? `\n\n*More ${searched!.category} in ${searched!.location!.city} that Benita found:*\n${extra.map((found, index) => benitaLine(found, index)).join("\n")}`
+        : "";
+      reply = `${opening ? `${opening}\n\n` : ""}${reply}${more}\n\n${OUTCOME_FOLLOW_UP}`;
       interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["btn.menu", "Main menu"]]);
     }
     if (resolution?.status === "unresolved" && discovery && !wider.length) {
-      reply = `I couldn't find any ${searched!.category} listed in ${searched!.location!.city} on TrustHub yet. Do you know a good one? Add it and help the next person.`;
+      reply = `I couldn't find any ${searched!.category} in ${searched!.location!.city} yet, on TrustHub or online. I've put it on Benita's list to look for tonight.\n\n${communityAsk(searched!)}`;
       interactive = withButtons(reply, [["menu.add_business", "Add a business"], ["menu.find", "Search again"], ["btn.menu", "Main menu"]]);
     }
     if (action === "ask_community_permission") conversation.pendingPermission = "community";
@@ -442,8 +494,7 @@ export class ConversationCoordinator {
 
   /** Benita results for a parsed directory request, using the service taxonomy's synonyms. */
   private async benitaForRequest(request: NormalizedRequest): Promise<BenitaResult[]> {
-    const intent = request.category ? serviceMatchIntent(request.category, request.serviceConcept) : null;
-    const extraTerms = intent ? databaseFilterTerms(intent, 6).words : [];
+    const extraTerms = requestTerms(request).filter((term) => term !== request.category?.toLocaleLowerCase()).slice(0, 8);
     const text = [request.entityName, request.category, request.serviceConcept].filter(Boolean).join(" ") || request.text;
     try {
       return await this.connect.store.benitaSearch({ text, city: request.location?.city ?? null, limit: 5, kinds: ["place"], extraTerms });

@@ -116,7 +116,8 @@ test("a person without a TrustHub profile is never offered a community request t
   assert.equal(guest.action, "final_unresolved");
   assert.equal(guest.conversation.pendingPermission, null);
   assert.doesNotMatch(guest.reply, /Reply yes to go ahead/);
-  assert.match(guest.reply, /couldn't find any bakery listed in Harare/);
+  assert.match(guest.reply, /couldn't find any bakery in Harare yet/);
+  assert.match(guest.reply, /Add a business/);
   const linked = await chat([], true)("I'm looking for a bakery in Harare");
   assert.equal(linked.action, "ask_community_permission");
   assert.equal(linked.conversation.pendingPermission, "community");

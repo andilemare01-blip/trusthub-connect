@@ -31,7 +31,9 @@ test("a first greeting grants the welcome credits once and a later one says welc
   assert.match(first.reply, /I help you find trusted businesses/);
   assert.equal(await store.creditBalance("101"), 10);
   const again = await say("Hello");
-  assert.match(again.reply, /^Welcome back! It's /);
+  // A returning person gets one of the library's welcome-back lines, with the assistant's name.
+  assert.ok(again.reply.includes(again.conversation.assistantName ?? "?"), again.reply);
+  assert.doesNotMatch(again.reply, /I help you find trusted businesses/);
   assert.equal(await store.creditBalance("101"), 10, "the welcome grant is never given twice");
 });
 

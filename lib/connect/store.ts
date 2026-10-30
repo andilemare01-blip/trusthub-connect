@@ -133,7 +133,10 @@ export function refineListings<T extends { title: string; area: string | null; p
     return true;
   });
   const distance = (item: { price: number | null }) => query.maxPrice && item.price !== null ? Math.abs(query.maxPrice - item.price) : Number.MAX_SAFE_INTEGER;
-  return kept.sort((a, b) => Number(b.status === "approved") - Number(a.status === "approved") || distance(a) - distance(b)).slice(0, query.limit);
+  // "Honda Fit" should rank a Honda Fit above a "fitted kitchen": more of the person's words first.
+  const words = query.words.map((word) => word.toLocaleLowerCase()).filter((word) => word.length >= 2);
+  const hits = (item: T) => words.filter((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(`${item.title} ${item.description ?? ""}`)).length;
+  return kept.sort((a, b) => hits(b) - hits(a) || Number(b.status === "approved") - Number(a.status === "approved") || distance(a) - distance(b)).slice(0, query.limit);
 }
 
 export interface NewBusinessSubmission {
@@ -183,7 +186,7 @@ export type CreditReason = "welcome" | "review" | "add_business" | "listing" | "
 
 export interface ConnectStore {
   findCard(code: string): Promise<ReviewCard | null>;
-  searchDirectory(name: string, city: string | null, limit: number): Promise<DirectoryBusiness[]>;
+  searchDirectory(name: string, city: string | null, limit: number, anywhere?: boolean): Promise<DirectoryBusiness[]>;
   getBusiness(id: string): Promise<DirectoryBusiness | null>;
   /** The newest review this identity left for this business, if any. */
   lastReviewAt(identityId: string, businessId: string): Promise<string | null>;
@@ -239,9 +242,11 @@ export class InMemoryConnectStore implements ConnectStore {
   private nextId(prefix: string) { this.sequence += 1; return `${prefix}-${this.sequence}`; }
 
   async findCard(code: string) { return this.cards.find((card) => card.code.toUpperCase() === code.toUpperCase()) ?? null; }
-  async searchDirectory(name: string, city: string | null, limit: number) {
+  async searchDirectory(name: string, city: string | null, limit: number, anywhere = false) {
     const wanted = lower(name);
-    return this.businesses.filter((business) => lower(business.name).includes(wanted) && (!city || lower(business.city) === lower(city))).slice(0, limit);
+    const inTown = this.businesses.filter((business) => lower(business.name).includes(wanted) && (!city || lower(business.city) === lower(city))).slice(0, limit);
+    if (inTown.length || !city || !anywhere) return inTown;
+    return this.businesses.filter((business) => lower(business.name).includes(wanted)).slice(0, limit);
   }
   async getBusiness(id: string) { return this.businesses.find((business) => business.id === id) ?? null; }
   async lastReviewAt(identityId: string, businessId: string) {

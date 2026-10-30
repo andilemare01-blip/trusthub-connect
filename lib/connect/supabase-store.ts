@@ -105,7 +105,7 @@ export class SupabaseConnectStore implements ConnectStore {
     return { id: String(card.id), code: String(card.code), status: String(card.status) as ReviewCard["status"], business: linked };
   }
 
-  async searchDirectory(name: string, city: string | null, limit: number): Promise<DirectoryBusiness[]> {
+  async searchDirectory(name: string, city: string | null, limit: number, anywhere = false): Promise<DirectoryBusiness[]> {
     const run = async (term: string) => {
       let query = this.db.from("businesses").select(BUSINESS_COLUMNS).ilike("name", `%${like(term)}%`);
       if (city) query = query.ilike("city", like(city));
@@ -115,7 +115,10 @@ export class SupabaseConnectStore implements ConnectStore {
     if (exact.length) return exact;
     // "Sunny Bakery Chinhoyi" may be stored as "Sunny Bakeries"; try the longest word on its own.
     const longest = name.split(/\s+/).filter((word) => word.length >= 4).sort((a, b) => b.length - a.length)[0];
-    return longest && longest !== name.trim() ? await run(longest) : [];
+    const loose = longest && longest !== name.trim() ? await run(longest) : [];
+    if (loose.length || !city || !anywhere) return loose;
+    // Not in the town given ("Clevers Hotel, Zvishavane" is in Chiredzi): the same name anywhere, so the person can pick it.
+    return await this.searchDirectory(name, null, limit);
   }
 
   async getBusiness(id: string): Promise<DirectoryBusiness | null> {

@@ -154,7 +154,9 @@ export function focusEvidence(resolution: ResolutionResult, request: NormalizedR
   const terms = requestTerms(request).filter((term) => term.length >= 4);
   const strength = (item: EvidenceItem) => {
     const name = (item.name ?? "").toLocaleLowerCase();
-    return (terms.some((term) => name.includes(term)) ? 2 : 0) + (evidenceMatchesRequest(item, request) ? 1 : 0);
+    // The exact word asked for in the name ("Regency *Hotel*") ranks above a synonym ("Lakeview *Resort*").
+    const exact = request.category ? new RegExp(`\\b${request.category.toLocaleLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}s?\\b`).test(name) : false;
+    return (exact ? 3 : 0) + (terms.some((term) => name.includes(term)) ? 2 : 0) + (evidenceMatchesRequest(item, request) ? 1 : 0);
   };
   const ranked = listings.map((item, index) => ({ item, index, score: strength(item) })).sort((a, b) => b.score - a.score || a.index - b.index);
   const kept = ranked.some((entry) => entry.score > 0) ? ranked.filter((entry) => entry.score > 0) : ranked;
@@ -501,7 +503,7 @@ export class ConversationCoordinator {
     const extra = wider.filter((found) => !own.has(nameKey(found.name))).slice(0, 3);
     const benitaLeads = (emptyDirectory || offTopicOnly) && wider.length > 0;
     if (benitaLeads) {
-      reply = `${benitaReply(wider, searched!.category!, searched!.location!.city!)}\n\n${communityAsk(searched!)}\n\n${OUTCOME_FOLLOW_UP}`;
+      reply = `${benitaReply(wider, searched!.category!, searched!.location!.area ? `${searched!.location!.area}, ${searched!.location!.city}` : searched!.location!.city!)}\n\n${communityAsk(searched!)}\n\n${OUTCOME_FOLLOW_UP}`;
       interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["menu.add_business", "Add a business"]]);
       action = "answer";
       nextState = "answer_uncertain";
@@ -644,7 +646,9 @@ export class ConversationCoordinator {
       conversation.pendingPermission = null;
       conversation.lastRequest = null;
     }
-    const nextState: RuntimeState = result.state ? "clarification_needed" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
+    // A results screen (search results, Community intelligence, a brain answer) is an answer, not an open question,
+    // so a later "Bulawayo" is never mistaken for the reply to an old search.
+    const nextState: RuntimeState = result.state && result.action !== "answer" ? "clarification_needed" : result.state ? "resolved" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
     conversation.state = nextState;
     conversation.lastAction = result.action;
     conversation.updatedAt = at;

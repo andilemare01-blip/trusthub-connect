@@ -86,7 +86,7 @@ export function readAiConfig(env: Record<string, string | undefined> = process.e
       // Wisdom's brain reads a town's searches, prices, news and listings in one call, so it needs room.
       maxInputTokens: Math.min(positive(env.AI_MAX_INPUT_TOKENS) ?? 6000, 16000),
       maxOutputTokens: Math.min(positive(env.AI_MAX_OUTPUT_TOKENS) ?? 600, 1500),
-      timeoutMs: Math.min(positive(env.AI_TIMEOUT_MS) ?? 12000, 20000),
+      timeoutMs: Math.min(positive(env.AI_TIMEOUT_MS) ?? 10000, 20000),
       httpReferer: (env.AI_PROVIDER_HTTP_REFERER?.trim() ?? env.OPENROUTER_HTTP_REFERER?.trim()) || undefined,
       appTitle: (env.AI_PROVIDER_APP_TITLE?.trim() ?? env.OPENROUTER_APP_TITLE?.trim()) || undefined,
     },

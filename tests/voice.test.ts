@@ -57,3 +57,7 @@ test("listings that match more of the words come first, and Jobs/jobs category c
   const jobs = await store.searchListings({ intents: ["recruiting"], words: [], category: "jobs", city: "Harare", limit: 5 });
   assert.deepEqual(jobs.map((job) => job.id), ["j"]);
 });
+
+test("a lower-case 'i'm' in a library line is written properly", () => {
+  assert.equal(personalise("Absolutely - i'm right here. i think so.", "Sarah", null), "Absolutely - I'm right here. I think so.");
+});

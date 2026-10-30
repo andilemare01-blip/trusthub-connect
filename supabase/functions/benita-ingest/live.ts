@@ -11,7 +11,7 @@
  */
 import { rest, rpc, source, upsert } from "./db.ts";
 import { clean, searchText, zwPhone, zwPhonesIn } from "./normalise.ts";
-import { classify, OVERPASS_AGENT, TOWNS } from "./osm.ts";
+import { classify, TOWNS } from "./osm.ts";
 
 export interface LiveResult { saved: number; map: number; web: number; engine: string | null; town: string | null; error?: string; notes?: string[] }
 
@@ -38,11 +38,10 @@ async function fetchWithin(url: string, init: RequestInit, ms: number): Promise<
   return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
 }
 
-const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const near = (aLat: number, aLon: number, bLat: number, bLon: number) => Math.abs(aLat - bLat) < 0.25 && Math.abs(aLon - bLon) < 0.25;
 
 /**
- * Named places of the asked-for kind in the town, from OpenStreetMap's search service (Nominatim).
+ * Named places of the asked-for kind in the town, from OpenStreetMap's search service (Nominatim), asked through the database.
  * Overpass is too slow and often "at capacity" for a person waiting on WhatsApp; Nominatim answers in about a second.
  * Its usage policy allows one request a second with a descriptive agent, so at most three words are asked, a second apart.
  */
@@ -55,10 +54,10 @@ async function fromMap(town: { name: string; lat: number; lon: number }, words: 
     const left = deadline - Date.now();
     if (left < 1_500) break;
     try {
-      const params = new URLSearchParams({ q: `${word} in ${town.name}`, countrycodes: "zw", format: "jsonv2", extratags: "1", addressdetails: "1", limit: "20" });
-      const response = await fetchWithin(`${NOMINATIM}?${params}`, { headers: { "user-agent": OVERPASS_AGENT, accept: "application/json" } }, Math.min(left - 300, 5_000));
-      if (!response.ok) { notes.push(`map ${word}: HTTP ${response.status}`); continue; }
-      const hits = await response.json() as Record<string, unknown>[];
+      // The search service refuses the edge network but answers the database, so the database asks it (benita_map_search).
+      const answer = await rpc<{ hits?: Record<string, unknown>[]; error?: unknown }>("benita_map_search", { p_query: `${word} in ${town.name}` });
+      if (!answer.hits) { notes.push(`map ${word}: ${String(answer.error)}`); continue; }
+      const hits = answer.hits;
       notes.push(`map ${word}: ${hits.length} hits`);
       for (const hit of hits) {
         const lat = Number(hit.lat), lon = Number(hit.lon);

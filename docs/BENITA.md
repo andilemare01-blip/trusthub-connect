@@ -127,3 +127,18 @@ Records use the same ids as the Overpass connector (`node:123`), so the two sour
 - **The brief.** Menu option 7 shows money, news, rents, cars, jobs and what people search for.
 - **Chat.** Any question about prices, money or the town gets a free answer. The AI writes it from the news, signals and facts when AI is available; otherwise the matching signals and headlines are shown directly.
 - **Listing search.** `benita_listings(...)` searches every live listing in the database by area, budget, rent or buy, and words, and can exclude office space from home searches. When nothing fits the budget, it returns the closest options above it, flagged with `within_budget = false`.
+
+## Wisdom's brain
+
+- **Open questions** go to the brain (`lib/connect/brain.ts`, `ConnectJourneys.brainAnswer`). Examples: starting a business, what's in demand, how much rent costs, "is it a good idea to…". These answers are free. The AI reads everything TrustHub knows about the town: searches, unmet demand, rents, car prices, news, listings, Benita's places and facts. It answers like a local consultant, giving numbers and one honest risk.
+- **When the AI is unavailable**, the same data is laid out plainly.
+- **Follow-ups** ("what about Bulawayo?", "tell me more") carry the previous exchange through the `brain` flow state.
+- **AI models.** The default is OpenRouter's free router (`openrouter/free`), followed by current free models. If every configured model has been retired, the gateway fetches today's free models itself. Free models get extra tokens to reason, so they never return an empty answer.
+- **Speed.** Free models are slow: brain answers take 10–30 s, while searches take 2–7 s. Setting a cheap paid `AI_PROVIDER_MODEL` (with its prices in `AI_PROVIDER_INPUT_USD_PER_MILLION_TOKENS` and `…OUTPUT…`) brings answers to a few seconds.
+
+## Try Wisdom and test numbers
+
+- **Try Wisdom.** `/api/admin/simulate` runs one message through the real WhatsApp pipeline and returns the reply instead of sending it. It accepts an admin session or the `x-trusthub-test-key` header, whose value is `simulator_key` in `benita_settings`. It only works for test numbers +263 7000 xxxxx.
+- **Admin chat.** The admin page has a Try Wisdom tab for demos.
+- **Test runner.** `{ action: "simulate", conversations: [{ phone, messages[] }] }` on `benita-ingest` plays whole conversations in order and returns the transcripts.
+- **Test numbers never count as demand.** A trigger blanks the town on their search-log rows.

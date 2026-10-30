@@ -29,7 +29,7 @@ export const KEYS: Record<string, string> = {
   man_made: '[man_made~"^(works|water_tower|telecommunication)$"][name]',
 };
 
-interface Place { name: string; lat: number; lon: number; kind: string }
+export interface Place { name: string; lat: number; lon: number; kind: string }
 
 /** Tries each public Overpass server in turn, each with its own time limit, inside one overall budget. */
 async function overpass(query: string, budgetMs: number, perServerMs: number): Promise<{ elements: Record<string, unknown>[] }> {
@@ -88,7 +88,7 @@ async function places(bbox: [number, number, number, number]): Promise<Place[]> 
   }
 }
 
-function locate(lat: number, lon: number, all: Place[]): { city: string | null; area: string | null } {
+export function locate(lat: number, lon: number, all: Place[]): { city: string | null; area: string | null } {
   let town: Place | null = null, townKm = Infinity, village: Place | null = null, villageKm = Infinity, suburb: Place | null = null, suburbKm = Infinity;
   for (const place of all) {
     const d = km(lat, lon, place.lat, place.lon);

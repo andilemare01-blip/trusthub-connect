@@ -8,6 +8,7 @@
  * POST { action: "sync" }                       mirror new records into businesses
  * POST { action: "tick" }                       scheduler: run whatever is due
  * POST { action: "live", text, city, terms }    look something up now (map, then web), save it, answer in ~12 s
+ * POST { action: "hdx", dataset }              a whole-country OpenStreetMap export (HDX), e.g. points_of_interest
  * POST { action: "gaps" }                       look up again every search that found nothing yesterday
  *
  * Long actions answer 202 at once and keep working; progress is written to
@@ -18,6 +19,7 @@ import { KEYS, runOsm, TILES } from "./osm.ts";
 import { probe, runWeb } from "./web.ts";
 import { runFacts } from "./facts.ts";
 import { gaps, live } from "./live.ts";
+import { DATASETS, peekHdx, runHdx } from "./hdx.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 
@@ -103,6 +105,13 @@ Deno.serve(async (req) => {
         if (!text || !city) return json({ error: "text and city required" }, 400);
         return json(await live(text, city, terms));
       }
+      case "hdx": {
+        const dataset = String(body.dataset ?? "");
+        if (!DATASETS[dataset]) return json({ error: "dataset unknown", datasets: Object.keys(DATASETS) }, 400);
+        return json({ job: await background(`hdx_${dataset}`, { dataset }, () => runHdx(dataset).then(syncAfter)) }, 202);
+      }
+      case "hdx_peek":
+        return json(await peekHdx(String(body.dataset ?? "health_facilities")));
       case "gaps":
         return json({ job: await background("benita_gaps", {}, () => gaps().then(syncAfter)) }, 202);
       case "tick":

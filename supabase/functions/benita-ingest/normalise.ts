@@ -8,7 +8,7 @@ export function zwPhone(raw: unknown): string | null {
     if (!digits) continue;
     if (digits.startsWith("+")) digits = digits.slice(1);
     if (digits.startsWith("00")) digits = digits.slice(2);
-    if (digits.startsWith("263")) digits = digits.slice(3);
+    if (digits.startsWith("263")) digits = digits.slice(3).replace(/^0(?=\d{9}$)/, ""); // "+263 0785…" is written with a stray 0
     else if (digits.startsWith("0")) digits = digits.slice(1);
     else if (digits.length > 10) continue; // a foreign number
     if (digits.length >= 7 && digits.length <= 10) return `+263${digits}`;

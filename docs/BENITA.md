@@ -107,3 +107,11 @@ When nothing stored answers a directory question, the app calls `benita-ingest` 
 Everything found is saved to `knowledge_records`, so the next person is answered straight from the database.
 
 The nightly `benita-gaps` job looks up again everything that found nothing the day before. It bypasses the 3-day "nothing found" memory.
+
+## Whole-country OpenStreetMap exports (HDX)
+
+`{ action: "hdx", dataset }` downloads a Humanitarian OpenStreetMap Team export of Zimbabwe from HDX (ODbL) and imports it in one run:
+- `points_of_interest` (about 10,000 named shops, restaurants, hotels, offices and services);
+- `health_facilities`, `education_facilities` and `financial_services`.
+
+Records use the same ids as the Overpass connector (`node:123`), so the two sources merge instead of duplicating. `benita-hdx` refreshes all four every Sunday. This is far faster than the cell-by-cell Overpass tasks, which now run every 10 minutes to stay gentle on the public servers.

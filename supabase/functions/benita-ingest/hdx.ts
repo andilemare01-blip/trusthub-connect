@@ -39,6 +39,15 @@ function centre(geometry: { type: string; coordinates: unknown } | null): [numbe
   return Number.isFinite(lat) && Number.isFinite(lon) ? [lat, lon] : null;
 }
 
+/** The first few raw records of a dataset, to check its field names. */
+export async function peekHdx(dataset: string): Promise<unknown> {
+  const response = await fetch(DATASETS[dataset]);
+  const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  const name = Object.keys(files).find((file) => /\.geojson$/i.test(file))!;
+  const collection = JSON.parse(strFromU8(files[name])) as { features: unknown[] };
+  return { files: Object.keys(files), count: collection.features.length, sample: collection.features.slice(0, 2) };
+}
+
 export async function runHdx(dataset: string): Promise<{ seen: number; accepted: number; rejected: number }> {
   const url = DATASETS[dataset];
   if (!url) throw new Error(`unknown dataset ${dataset}`);

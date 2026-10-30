@@ -19,7 +19,7 @@ import { KEYS, runOsm, TILES } from "./osm.ts";
 import { probe, runWeb } from "./web.ts";
 import { runFacts } from "./facts.ts";
 import { gaps, live } from "./live.ts";
-import { DATASETS, runHdx } from "./hdx.ts";
+import { DATASETS, peekHdx, runHdx } from "./hdx.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 
@@ -110,6 +110,8 @@ Deno.serve(async (req) => {
         if (!DATASETS[dataset]) return json({ error: "dataset unknown", datasets: Object.keys(DATASETS) }, 400);
         return json({ job: await background(`hdx_${dataset}`, { dataset }, () => runHdx(dataset).then(syncAfter)) }, 202);
       }
+      case "hdx_peek":
+        return json(await peekHdx(String(body.dataset ?? "health_facilities")));
       case "gaps":
         return json({ job: await background("benita_gaps", {}, () => gaps().then(syncAfter)) }, 202);
       case "tick":

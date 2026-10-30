@@ -91,3 +91,19 @@ Edge functions stop after 150 seconds, and a busy cell like Harare can take Over
 ## Deploying
 
 The deployed function is a one-line entry that imports `supabase/functions/benita-ingest/index.ts` from this repository at a pinned commit, so production runs exactly what was reviewed. To deploy a change, commit it, then redeploy the entry with the new commit hash.
+
+## Live lookups and memory
+
+When nothing stored answers a directory question, the app calls `benita-ingest` with `{ action: "live", text, city, terms }`.
+
+1. **Memory first.** `benita_live_lookups` keeps one row per question (`hotel|beitbridge`). If the question was looked up recently, nothing is fetched again:
+   - when something was found, it is remembered for 30 days;
+   - when nothing was found, it is remembered for 3 days.
+
+   `times_asked` counts demand.
+2. **OpenStreetMap search (Nominatim).** The database fetches it through `benita_map_search`, because Nominatim refuses requests from the edge network. It is free, and limited to 1 request a second.
+3. **Web search, cheapest first:** Tavily, then Exa, then OpenRouter's web plugin. Each key is read from the function secrets (`TAVILY_API_KEY`, `EXA_API_KEY`, `OPENROUTER_API_KEY`) or from `benita_settings` (lower-case key names).
+
+Everything found is saved to `knowledge_records`, so the next person is answered straight from the database.
+
+The nightly `benita-gaps` job looks up again everything that found nothing the day before. It bypasses the 3-day "nothing found" memory.

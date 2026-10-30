@@ -34,6 +34,27 @@ async function townFor(city: string): Promise<{ name: string; lat: number; lon: 
   return rows[0] ?? null;
 }
 
+/** A key from the function's secrets, or else from benita_settings (service role only), so a key can be added without a redeploy. */
+const secrets = new Map<string, string | null>();
+async function secret(name: string): Promise<string | null> {
+  const fromEnv = Deno.env.get(name);
+  if (fromEnv) return fromEnv;
+  if (!secrets.has(name)) {
+    const rows = await rest<{ value: string }[]>(`benita_settings?key=eq.${name.toLowerCase()}&select=value`).catch(() => []);
+    secrets.set(name, rows[0]?.value ?? null);
+  }
+  return secrets.get(name) ?? null;
+}
+
+/** How long a lookup is remembered: what was found stays a month; "nothing out there" is retried after three days. */
+const REMEMBER_FOUND_DAYS = 30, REMEMBER_EMPTY_DAYS = 3;
+
+interface Memory { query_key: string; saved: number; engine: string | null; times_asked: number; looked_up_at: string }
+
+async function remember(row: Record<string, unknown>): Promise<void> {
+  await rest("benita_live_lookups?on_conflict=query_key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: JSON.stringify(row) }).catch(() => undefined);
+}
+
 async function fetchWithin(url: string, init: RequestInit, ms: number): Promise<Response> {
   return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
 }
@@ -99,7 +120,7 @@ async function fromMap(town: { name: string; lat: number; lon: number }, words: 
 interface WebHit { title: string; url: string; content: string }
 
 async function tavily(query: string, ms: number): Promise<WebHit[] | null> {
-  const key = Deno.env.get("TAVILY_API_KEY");
+  const key = await secret("TAVILY_API_KEY");
   if (!key) return null;
   const response = await fetchWithin("https://api.tavily.com/search", {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
@@ -111,7 +132,7 @@ async function tavily(query: string, ms: number): Promise<WebHit[] | null> {
 }
 
 async function exa(query: string, ms: number): Promise<WebHit[] | null> {
-  const key = Deno.env.get("EXA_API_KEY");
+  const key = await secret("EXA_API_KEY");
   if (!key) return null;
   const response = await fetchWithin("https://api.exa.ai/search", {
     method: "POST", headers: { "content-type": "application/json", "x-api-key": key },
@@ -126,7 +147,7 @@ interface Found { name: string; phone: string | null; area: string | null; url: 
 
 /** The AI account's web search, asked for named businesses as JSON. */
 async function openrouter(what: string, town: string, ms: number): Promise<Found[] | null> {
-  const key = Deno.env.get("OPENROUTER_API_KEY");
+  const key = await secret("OPENROUTER_API_KEY");
   if (!key) return null;
   const model = Deno.env.get("OPENROUTER_MODEL") ?? "openai/gpt-4o-mini";
   const response = await fetchWithin("https://openrouter.ai/api/v1/chat/completions", {
@@ -177,11 +198,31 @@ async function liveSource(): Promise<{ id: string; license: string | null }> {
   return await source("benita_live_web");
 }
 
-export async function live(text: string, city: string, terms: string[], budgetMs = 12_000): Promise<LiveResult> {
-  const deadline = Date.now() + budgetMs;
-  notes = [];
+/**
+ * Answers a question from Benita's memory when it was asked recently, otherwise looks it up once and remembers.
+ * `force` (the nightly gap run) looks again even when the memory says there was nothing.
+ */
+export async function live(text: string, city: string, terms: string[], budgetMs = 12_000, force = false): Promise<LiveResult> {
   const town = await townFor(city);
   if (!town) return { saved: 0, map: 0, web: 0, engine: null, town: null, error: "unknown town" };
+  const queryKey = `${safeWord(text)}|${town.name.toLocaleLowerCase()}`;
+  const known = (await rest<Memory[]>(`benita_live_lookups?query_key=eq.${encodeURIComponent(queryKey)}&select=query_key,saved,engine,times_asked,looked_up_at`).catch(() => []))[0];
+  if (known) {
+    const ageDays = (Date.now() - Date.parse(known.looked_up_at)) / 86_400_000;
+    const fresh = ageDays < (known.saved > 0 ? REMEMBER_FOUND_DAYS : REMEMBER_EMPTY_DAYS);
+    if (fresh && !(force && known.saved === 0)) {
+      await rest(`benita_live_lookups?query_key=eq.${encodeURIComponent(queryKey)}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ times_asked: known.times_asked + 1, last_asked_at: new Date().toISOString() }) }).catch(() => undefined);
+      return { saved: known.saved, map: 0, web: 0, engine: "memory", town: town.name, notes: [`remembered from ${known.looked_up_at.slice(0, 10)} (${known.engine ?? "nothing found"})`] };
+    }
+  }
+  const result = await lookUp(text, town, terms, budgetMs);
+  await remember({ query_key: queryKey, text: safeWord(text), town: town.name, saved: result.saved, engine: result.engine, notes: result.notes ?? [], times_asked: (known?.times_asked ?? 0) + 1, looked_up_at: new Date().toISOString(), last_asked_at: new Date().toISOString() });
+  return result;
+}
+
+async function lookUp(text: string, town: { name: string; lat: number; lon: number }, terms: string[], budgetMs: number): Promise<LiveResult> {
+  const deadline = Date.now() + budgetMs;
+  notes = [];
   const words = [...new Set([text, ...terms].map(safeWord).filter((word) => word.length >= 3))].slice(0, 10);
   if (!words.length) return { saved: 0, map: 0, web: 0, engine: null, town: town.name, error: "nothing to look for" };
 
@@ -237,7 +278,7 @@ export async function gaps(limit = 15): Promise<{ seen: number; accepted: number
   let accepted = 0, rejected = 0;
   for (const gap of todo) {
     const town = await rpc<string | null>("benita_resolve_town", { p_city: gap.city }).catch(() => null);
-    const result = await live(gap.category, town ?? gap.city, [], 20_000).catch(() => null);
+    const result = await live(gap.category, town ?? gap.city, [], 20_000, true).catch(() => null);
     if (result?.saved) accepted += result.saved; else rejected++;
   }
   return { seen: todo.length, accepted, rejected };

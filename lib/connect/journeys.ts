@@ -614,7 +614,13 @@ export class ConnectJourneys {
     const place = parsePlace(query);
     const words = keywords(query);
     const category = kind.category ?? (categorise(query) === "general" ? null : categorise(query));
-    const results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, limit: 5 });
+    const budget = parsePrice(query);
+    // For homes, a monthly-sized budget means renting; words like "buy" or "for sale" mean buying.
+    const deal = kind.journey !== "houses" ? null
+      : /\b(rent|to let|lease|per month|monthly|p\/m)\b/i.test(query) ? "rent"
+      : /\b(buy|for sale|purchase|own)\b/i.test(query) ? "buy"
+      : budget && budget.amount <= 15_000 ? "rent" : null;
+    const results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, area: place.area, maxPrice: budget?.amount ?? null, deal, limit: 5 });
     await this.store.logSearch({ identityId: context.identityId, journey: kind.journey, category: category ?? words[0] ?? null, city: place.city, area: place.area, queryText: clip(query, 200), resultCount: results.length, sourceMessageId: context.providerMessageId ? `${context.providerMessageId}:${kind.journey}` : null }).catch(() => undefined);
     const nextState: ConnectJourneyState = { flow: "listing_search", step: "results", data: { kind: String(state.data.kind), query } };
     const requestLabel = kind.journey === "jobs" ? "Post I'm available" : "Post a request";

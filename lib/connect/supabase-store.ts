@@ -6,6 +6,7 @@
  */
 import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
+import { listingPrice, refineListings } from "./store.ts";
 import { benitaFacts, benitaSearch, type BenitaFact, type BenitaQuery, type BenitaResult, type BenitaRpcClient } from "../benita/index.ts";
 
 type Row = Record<string, unknown>;
@@ -34,7 +35,7 @@ export interface ConnectDbClient {
 }
 
 const BUSINESS_COLUMNS = "id,name,category,city,area,phone,reviews_count";
-const LISTING_COLUMNS = "id,intent,category,title,price_text,city,area,phone,status,created_at,source_url,expires_at";
+const LISTING_COLUMNS = "id,intent,category,title,price_text,price_min,city,area,phone,status,created_at,source_url,expires_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IDENTITY = /^\d{1,18}$/;
 
@@ -206,11 +207,15 @@ export class SupabaseConnectStore implements ConnectStore {
     let builder = this.db.from("trusthub_connect_listings").select(LISTING_COLUMNS).in("intent", query.intents).in("status", ["approved", "pending"]);
     if (query.city) builder = builder.ilike("city", like(query.city));
     const terms = query.words.map(orTerm).filter((word) => word.length >= 3);
-    const clauses = [...terms.map((word) => `title.ilike.*${word}*`), ...terms.map((word) => `description.ilike.*${word}*`), ...(query.category ? [`category.eq.${orTerm(query.category)}`] : [])];
+    // Categories are stored as "Property" by the collectors and "property" by the app, so the match ignores case.
+    const clauses = [...terms.map((word) => `title.ilike.*${word}*`), ...terms.map((word) => `description.ilike.*${word}*`), ...(query.category ? [`category.ilike.${orTerm(query.category)}`] : [])];
     if (clauses.length) builder = builder.or(clauses.join(","));
-    const found = rows(await builder.order("created_at", { ascending: false }).limit(Math.min(query.limit * 3, 30)), "Search listings").filter(live).map(listing);
-    // Checked listings first, then the newest.
-    return found.sort((a, b) => Number(b.status === "approved") - Number(a.status === "approved")).slice(0, query.limit);
+    // The area must match too ("Borrowdale"); a second or() is ANDed with the first.
+    const area = query.area ? orTerm(query.area) : "";
+    if (area.length >= 3) builder = builder.or(`area.ilike.*${area}*,title.ilike.*${area}*,description.ilike.*${area}*`);
+    const found = rows(await builder.order("created_at", { ascending: false }).limit(query.maxPrice || query.deal || area ? 120 : Math.min(query.limit * 3, 30)), "Search listings").filter(live);
+    // Checked listings first, then the ones closest to the budget.
+    return refineListings(found.map((row) => ({ ...listing(row), price: listingPrice(row.price_min, text(row.price_text)) })), query);
   }
 
   async logSearch(entry: SearchLogEntry): Promise<void> {

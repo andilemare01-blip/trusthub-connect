@@ -98,7 +98,42 @@ export interface ListingQuery {
   words: readonly string[];
   category?: string | null;
   city?: string | null;
+  /** A suburb or area ("Borrowdale"); must appear in the listing's area, title or description. */
+  area?: string | null;
+  /** The person's budget; listings clearly above it are left out. */
+  maxPrice?: number | null;
+  /** "rent" or "buy" when the request makes it clear; "$1,200 in Borrowdale" is a rent budget, not a house price. */
+  deal?: "rent" | "buy" | null;
   limit: number;
+}
+
+/** The price a listing asks, from its number or its text ("$1,500"), or null. */
+export function listingPrice(priceMin: unknown, priceText: string | null): number | null {
+  const direct = Number(priceMin);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const match = /(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k)?\b/i.exec(priceText ?? "");
+  if (!match) return null;
+  const value = Number(match[1].replace(/,/g, "")) * (match[2] ? 1000 : 1);
+  return value > 0 ? value : null;
+}
+
+const RENT_WORDS = /\b(rent|rental|to let|lease|per month|p\/m|monthly)\b/i;
+const SALE_WORDS = /\b(for sale|sale|selling|buy)\b/i;
+
+/** Applies area, budget and rent-or-buy to listings already narrowed by the database, closest to the budget first. */
+export function refineListings<T extends { title: string; area: string | null; priceText: string | null; status?: string; description?: string | null }>(items: (T & { price: number | null })[], query: ListingQuery): T[] {
+  const area = query.area?.toLocaleLowerCase();
+  const kept = items.filter((item) => {
+    const text = `${item.title} ${item.area ?? ""} ${item.description ?? ""}`;
+    if (area && !text.toLocaleLowerCase().includes(area)) return false;
+    if (query.deal === "rent" && (SALE_WORDS.test(item.title) && !RENT_WORDS.test(item.title))) return false;
+    if (query.deal === "buy" && RENT_WORDS.test(item.title) && !SALE_WORDS.test(item.title)) return false;
+    if (query.maxPrice && item.price !== null && item.price > query.maxPrice * 1.15) return false;
+    if (query.deal === "rent" && query.maxPrice && item.price !== null && item.price < query.maxPrice * 0.2) return false;
+    return true;
+  });
+  const distance = (item: { price: number | null }) => query.maxPrice && item.price !== null ? Math.abs(query.maxPrice - item.price) : Number.MAX_SAFE_INTEGER;
+  return kept.sort((a, b) => Number(b.status === "approved") - Number(a.status === "approved") || distance(a) - distance(b)).slice(0, query.limit);
 }
 
 export interface NewBusinessSubmission {
@@ -244,13 +279,14 @@ export class InMemoryConnectStore implements ConnectStore {
     return { id };
   }
   async searchListings(query: ListingQuery) {
-    return this.listings.filter((listing) => {
+    const matched = this.listings.filter((listing) => {
       if (!query.intents.includes(listing.intent as ListingIntent)) return false;
       if (listing.status === "rejected" || listing.status === "expired") return false;
       if (query.city && lower(listing.city) !== lower(query.city)) return false;
-      if (query.category && listing.category === query.category) return true;
+      if (query.category && lower(listing.category) === lower(query.category)) return true;
       return !query.words.length || query.words.some((word) => lower(listing.title).includes(lower(word)));
-    }).slice(0, query.limit);
+    });
+    return refineListings(matched.map((listing) => ({ ...listing, price: listingPrice(null, listing.priceText) })), query);
   }
   async logSearch(entry: SearchLogEntry) {
     if (entry.sourceMessageId && this.searches.some((stored) => stored.sourceMessageId === entry.sourceMessageId)) return;

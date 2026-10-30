@@ -13,7 +13,10 @@ import { rest, rpc, source, upsert } from "./db.ts";
 import { clean, searchText, zwPhone, zwPhonesIn } from "./normalise.ts";
 import { classify, OVERPASS_AGENT, TOWNS } from "./osm.ts";
 
-export interface LiveResult { saved: number; map: number; web: number; engine: string | null; town: string | null; error?: string }
+export interface LiveResult { saved: number; map: number; web: number; engine: string | null; town: string | null; error?: string; notes?: string[] }
+
+/** What each step of the last lookup saw, returned to the caller so a silent miss can be explained. */
+let notes: string[] = [];
 
 const KIND_KEY = /^(shop|amenity|tourism|office|craft|healthcare|leisure)$/;
 /** Pages that list many places, or that we do not take facts from, are not one business. */
@@ -54,8 +57,10 @@ async function fromMap(town: { name: string; lat: number; lon: number }, words: 
     try {
       const params = new URLSearchParams({ q: `${word} in ${town.name}`, countrycodes: "zw", format: "jsonv2", extratags: "1", addressdetails: "1", limit: "20" });
       const response = await fetchWithin(`${NOMINATIM}?${params}`, { headers: { "user-agent": OVERPASS_AGENT, accept: "application/json" } }, Math.min(left - 300, 5_000));
-      if (!response.ok) continue;
-      for (const hit of await response.json() as Record<string, unknown>[]) {
+      if (!response.ok) { notes.push(`map ${word}: HTTP ${response.status}`); continue; }
+      const hits = await response.json() as Record<string, unknown>[];
+      notes.push(`map ${word}: ${hits.length} hits`);
+      for (const hit of hits) {
         const lat = Number(hit.lat), lon = Number(hit.lon);
         if (!hit.name || !near(lat, lon, town.lat, town.lon)) continue;
         const extra = (hit.extratags ?? {}) as Record<string, string>, address = (hit.address ?? {}) as Record<string, string>;
@@ -65,7 +70,7 @@ async function fromMap(town: { name: string; lat: number; lon: number }, words: 
         if (address.house_number) tags["addr:housenumber"] = address.house_number;
         elements.set(`${hit.osm_type}:${hit.osm_id}`, { type: hit.osm_type, id: hit.osm_id, lat, lon, tags });
       }
-    } catch { /* the next word, or the web */ }
+    } catch (error) { notes.push(`map ${word}: ${String(error).slice(0, 80)}`); }
   }
   if (!elements.size) return [];
   const src = await source("osm");
@@ -175,15 +180,16 @@ async function liveSource(): Promise<{ id: string; license: string | null }> {
 
 export async function live(text: string, city: string, terms: string[], budgetMs = 12_000): Promise<LiveResult> {
   const deadline = Date.now() + budgetMs;
+  notes = [];
   const town = await townFor(city);
   if (!town) return { saved: 0, map: 0, web: 0, engine: null, town: null, error: "unknown town" };
   const words = [...new Set([text, ...terms].map(safeWord).filter((word) => word.length >= 3))].slice(0, 10);
   if (!words.length) return { saved: 0, map: 0, web: 0, engine: null, town: town.name, error: "nothing to look for" };
 
   // The map answers first; it is free and its places are real.
-  const mapRows = await fromMap(town, words, Math.min(deadline, Date.now() + 7_000)).catch(() => []);
+  const mapRows = await fromMap(town, words, Math.min(deadline, Date.now() + 7_000)).catch((error) => { notes.push(`map: ${String(error).slice(0, 80)}`); return []; });
   let saved = mapRows.length ? await upsert("knowledge_records", mapRows, "source_id,source_record_id") : 0;
-  if (saved >= 3) return { saved, map: saved, web: 0, engine: "openstreetmap", town: town.name };
+  if (saved >= 3) return { saved, map: saved, web: 0, engine: "openstreetmap", town: town.name, notes };
 
   // Then the web, cheapest first, each one only when the one before had nothing or is not set up.
   const query = `${text} in ${town.name} Zimbabwe contact phone`;
@@ -197,9 +203,10 @@ export async function live(text: string, city: string, terms: string[], budgetMs
     if (left < 2_000) break;
     try {
       const result = await run(left - 500);
-      if (result === null) continue; // not set up
+      if (result === null) { notes.push(`${name}: no key`); continue; }
+      notes.push(`${name}: ${result.length} found`);
       if (result.length) { found = result; engine = name; break; }
-    } catch (error) { console.warn(JSON.stringify({ event: "benita.live_web_failed", engine: name, error: String(error).slice(0, 120) })); }
+    } catch (error) { notes.push(`${name}: ${String(error).slice(0, 80)}`); }
   }
   if (found.length) {
     const src = await liveSource();
@@ -215,7 +222,7 @@ export async function live(text: string, city: string, terms: string[], budgetMs
     }));
     saved += await upsert("knowledge_records", rows, "source_id,source_record_id");
   }
-  return { saved, map: mapRows.length, web: found.length, engine: engine ?? (mapRows.length ? "openstreetmap" : null), town: town.name };
+  return { saved, map: mapRows.length, web: found.length, engine: engine ?? (mapRows.length ? "openstreetmap" : null), town: town.name, notes };
 }
 
 /** Every search that found nothing in the last day is looked up again, most-asked first. */

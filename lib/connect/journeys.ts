@@ -103,6 +103,13 @@ function waLink(phone: string | null): string | null {
   return /^7[1378]\d{7}$/.test(local) ? `wa.me/263${local}` : null;
 }
 
+/** True when two business names are the same business, ignoring case, punctuation and words like "Pvt Ltd". */
+function sameBusinessName(a: string, b: string): boolean {
+  const key = (name: string) => name.toLocaleLowerCase().replace(/\b(pvt|private|ltd|limited|t\/a|the|and|&)\b/g, " ").replace(/[^\p{L}\p{N}]+/gu, "");
+  const left = key(a), right = key(b);
+  return !!left && !!right && (left === right || (Math.min(left.length, right.length) >= 6 && (left.includes(right) || right.includes(left))));
+}
+
 /** Things people buy and sell (as opposed to services they hire). */
 const GOODS = /\b(car|cars|vehicle|toyota|honda|nissan|mazda|mercedes|bmw|vw|volkswagen|ford|isuzu|hilux|fit|aqua|vitz|corolla|probox|fortuner|land ?cruiser|ranger|truck|kombi|motorbike|phone|iphone|samsung|tecno|infinix|laptop|tv|fridge|stove|sofa|bed|solar panel|inverter|generator|furniture)\b/i;
 
@@ -483,7 +490,9 @@ export class ConnectJourneys {
         const phone = skipped ? null : parseCheckedPhone(text);
         if (!skipped && !phone) return next("phone", "That doesn't look like a phone number. Send it like *0771 234 567*, or tap Skip.", {}, buttons("That doesn't look like a phone number. Send it like 0771 234 567, or tap Skip.", [["btn.skip", "Skip"]]));
         const withPhone = { ...data, phone };
-        const duplicates = await this.store.searchDirectory(String(data.name), typeof data.city === "string" ? data.city : null, 3);
+        const duplicates = (await this.store.searchDirectory(String(data.name), typeof data.city === "string" ? data.city : null, 3))
+          // Only a business whose name really matches counts as a duplicate ("Dot's Kitchen" is not "Mama Rudo Kitchen").
+          .filter((match) => sameBusinessName(match.name, String(data.name)));
         if (duplicates.length) {
           const match = duplicates[0];
           const body = `This looks like it's already on TrustHub:\n*${match.name}*${where(match) ? ` · ${where(match)}` : ""}\n\nIs it the same business?`;
@@ -859,6 +868,8 @@ export class ConnectJourneys {
       if (isFeedbackCue(text)) return await this.recordFeedback(text, context);
       // A plain search is always free, so the coordinator answers it as a search.
       if (isSearchLike(text)) return { reply: "", state: null, action: "answer", pass: true };
+      // "Yes" or "ok" is not a question yet.
+      if (text.trim().length < 8 || chose(text, "yes", ...YES, ...NO)) return { reply: "Go ahead, what's your question? For example: *What's the best area in Harare to open a hardware shop?*", state, action: "clarify" };
       if (!this.answerer || !context.identityId) return this.deepUnavailable();
       const balance = await this.store.creditBalance(context.identityId);
       if (balance < 1) {
@@ -869,6 +880,8 @@ export class ConnectJourneys {
       return { reply: body, interactive: buttons(body, [["btn.use_credit", "Use 1 credit"], ["btn.cancel", "Cancel"]]), state: { flow: "ask", step: "confirm", data: { question: text.slice(0, 500) } }, action: "clarify" };
     }
     if (state.step === "confirm") {
+      // A new question typed instead of tapping a button replaces the old one (and is confirmed again).
+      if (text.trim().length >= 12 && !chose(text, "btn.use_credit", "use 1 credit", "use credit", ...YES) && !chose(text, "btn.cancel", "cancel", ...NO)) return await this.ask({ flow: "ask", step: "question", data: {} }, text, context);
       if (!chose(text, "btn.use_credit", "use 1 credit", "use credit", ...YES)) return { reply: "Okay, no credit used.", interactive: buttons("Okay, no credit used.", [["btn.menu", "Main menu"]]), state: null, action: "answer" };
       if (!this.answerer || !context.identityId) return this.deepUnavailable();
       const reference = context.providerMessageId ?? `local:ask:${this.now().getTime()}`;

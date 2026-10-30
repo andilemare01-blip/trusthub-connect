@@ -63,3 +63,11 @@ export function nextAssistantName(names: readonly string[], current: string | nu
   const choices = names.filter((name) => name !== current);
   return choices[Math.min(choices.length - 1, Math.max(0, pick(choices.length)))];
 }
+
+/** The name to greet someone by: "Miss Tae😊" is Tae, "Dr. Moyo" is Moyo, "baba Tino" is Tino. */
+export function firstNameOf(profileName: string | null | undefined): string | null {
+  const words = (profileName ?? "").replace(/[^\p{L}\s'-]/gu, " ").split(/\s+/).filter(Boolean);
+  const name = words.find((word) => !/^(miss|mr|mrs|ms|mx|dr|sir|madam|mai|baba|amai|mama|sisi|mukoma|prof|pastor|rev|eng)\.?$/i.test(word));
+  if (!name || name.length < 2) return null;
+  return name.charAt(0).toLocaleUpperCase() + name.slice(1);
+}

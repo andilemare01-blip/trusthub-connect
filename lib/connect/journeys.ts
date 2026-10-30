@@ -16,8 +16,9 @@ import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
 import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
-import { momentOf, voiceLine } from "./voice.ts";
+import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
 import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
+import { brainFallback, isAdviceQuestion } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
@@ -171,6 +172,11 @@ export class ConnectJourneys {
       if (/\b(?:my (?:credits|profile|account|balance)|create (?:a |my )?(?:profile|account)|sign ?up|register)\b/i.test(message)) return await this.profile(context);
       const social = this.socialReply(message, context);
       if (social) return social;
+      // "review Clevers Hotel" / "I want to rate Sunny Bakery" starts a review of that business.
+      const toReview = /^(?:i want to |let me |can i )?(?:review|rate|write a review (?:for|of|about))\s+(.{3,80})$/i.exec(message)?.[1];
+      if (toReview && !/\b(?:reviews|say|said|think)\b/i.test(toReview)) return await this.findForReview(toReview, context);
+      const natural = await this.naturalListing(message, context);
+      if (natural) return natural;
       const reviews = readReviewsQuestion(message);
       if (reviews) return await this.readReviews(reviews);
       return null;
@@ -199,7 +205,7 @@ export class ConnectJourneys {
       const grant = await this.store.addCredits(context.identityId, 10, "welcome", "welcome");
       returning = !grant.added;
     }
-    const firstName = context.profileName?.trim().split(/\s+/)[0] ?? null;
+    const firstName = firstNameOf(context.profileName);
     const name = context.assistantName;
     // Lines from the Wisdom library, a different one each time; the plain line is the fallback.
     const hello = returning
@@ -208,7 +214,7 @@ export class ConnectJourneys {
     const introduce = (line: string) => line.includes(name) ? line : `${line} It's ${name} on duty today 🙂`;
     const body = returning
       ? (greeted && hello ? `${introduce(hello)}${/[?]\s*$/.test(hello) ? "" : " What would you like to do?"}` : `${greeted ? `Welcome back${firstName ? `, ${firstName}` : ""}! ` : ""}It's ${name}. What would you like to do?`)
-      : `${hello ?? `Hi, I'm ${name}.`} I help you find trusted businesses, buy and sell, and see what's happening around you.\n\nWhat would you like to do?`;
+      : `${hello ?? `Hi, I'm ${name}. I help you find trusted businesses, buy and sell, and see what's happening around you.`}\n\nWhat would you like to do?`;
     return { reply: `${body}\n\n${menuText()}`, interactive: menuInteractive(body), state: null, action: "show_menu" };
   }
 
@@ -668,7 +674,7 @@ export class ConnectJourneys {
       const city = String(state.data.city ?? "Harare");
       const moment = momentOf(text);
       if (moment === "thanks" || moment === "goodbye" || moment === "smalltalk_weather") {
-        const line = voiceLine(moment, context.assistantName, context.profileName?.trim().split(/\s+/)[0] ?? null) ?? "Anytime!";
+        const line = voiceLine(moment, context.assistantName, firstNameOf(context.profileName)) ?? "Anytime!";
         const body = moment === "goodbye" ? line : `${line}\n\nAnything else you want to know about ${city}?`;
         return { reply: body, interactive: buttons(body, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state, action: "answer" };
       }
@@ -679,6 +685,63 @@ export class ConnectJourneys {
     const city = tapped ?? parsePlace(text).city ?? (text.trim().split(/\s+/).length <= 3 && /^[\p{L}\s'-]+$/u.test(text.trim()) ? text.trim().replace(/(^|\s)(\p{L})/gu, (_, gap: string, letter: string) => gap + letter.toLocaleUpperCase()) : null);
     if (!city) return { reply: "Which town? For example: *Harare*.", state: { flow: "area", step: "town", data: {} }, action: "clarify" };
     return await this.pulse(city, context);
+  }
+
+  /**
+   * Everyday phrasing for the market flows: "I'm selling my iPhone 13 for $450 in Harare" starts a listing,
+   * "2 bedroom flat in Avondale under $800" searches homes, "accountant jobs" searches jobs, "cheap Toyota Hilux
+   * in Bulawayo" searches items for sale. Returns null for anything else.
+   */
+  async naturalListing(message: string, context: ConnectContext): Promise<ConnectReply | null> {
+    const text = message.trim();
+    if (text.length < 4 || text.length > 300) return null;
+    const property = /\b(house|houses|flat|flats|room|rooms|cottage|apartment|stand|townhouse|cluster|bedroom|bedroomed|\d\s?-?bed|bed ?sitter|accommodation to rent|place to (?:rent|stay))\b/i;
+    const goods = /\b(car|cars|vehicle|toyota|honda|nissan|mazda|mercedes|bmw|vw|volkswagen|ford|isuzu|hilux|fit|aqua|vitz|corolla|probox|fortuner|land ?cruiser|ranger|truck|kombi|motorbike|phone|iphone|samsung|tecno|infinix|laptop|tv|fridge|stove|sofa|bed|solar panel|inverter|generator|furniture)\b/i;
+    const selling = /^(?:i'?m |i am |we'?re |we are )?(?:selling|sell(?:ing)? my|for sale[:,]?)\b|\bi (?:want|would like|wanna) to sell\b/i;
+    const lettingOut = /\b(?:i'?m |i am |we'?re )?(?:renting out|letting out)\b|^to let\b/i;
+    const hiring = /\b(?:we'?re hiring|i'?m hiring|we are hiring|looking to hire|need to hire|i want to hire|vacancy at my)\b/i;
+    const strip = (value: string) => value.replace(/^(?:i'?m |i am |we'?re |we are )?(?:selling|renting out|letting out)\s+(?:my |our |a |an )?/i, "").replace(/^i (?:want|would like|wanna) to sell\s+(?:my |our |a |an )?/i, "").replace(/^for sale[:,]?\s*/i, "");
+    if (hiring.test(text)) return await this.listing({ flow: "listing", step: "details", data: { kind: "hire" } }, text.replace(hiring, "").trim() || text, context);
+    if (lettingOut.test(text)) return await this.listing({ flow: "listing", step: "details", data: { kind: "rent_out" } }, strip(text), context);
+    if (selling.test(text)) return await this.listing({ flow: "listing", step: "details", data: { kind: property.test(text) ? "rent_out" : "sell" } }, strip(text), context);
+    if (/\b(jobs?|vacanc(?:y|ies)|employment|internships?|graduate trainee)\b/i.test(text) && !/\b(job seekers?|cv|my cv)\b/i.test(text)) {
+      return await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "jobs" } }, text, context);
+    }
+    // A place to live is a listing search only when it sounds like one: a budget, renting or buying, or bedrooms.
+    if (property.test(text) && !/\b(agents?|agency|agencies|valuers?|builders?|painters?|plumbers?|cleaners?|security|my house|our house|flood\w*|leak\w*|broken|fire)\b/i.test(text) && (parsePrice(text) || /\b(rent|renting|to let|for rent|lease|buy|buying|for sale|bedroom|bed|rooms)\b/i.test(text))) {
+      return await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "houses" } }, text, context);
+    }
+    // "phone shops", "car repairs", "Toyota dealer" are businesses to find, not items to buy.
+    const business = /\b(shops?|stores?|repairs?|dealers?|dealerships?|showrooms?|spares|services?|fix|fixing|mechanics?|garages?|agents?|hire|rental company|insurance|wash)\b/i;
+    // Goods are a search only with a reason to buy: a price, "for sale", "cheap", "second hand"... never "my car won't start".
+    if (goods.test(text) && !business.test(text) && !/\b(my|our|won'?t|doesn'?t|broke|broken|stolen|accident|stuck)\b/i.test(text) && (parsePrice(text) || /\b(for sale|buy|buying|cheap|second hand|ex ?japan|used|selling|price of|prices?)\b/i.test(text))) {
+      return await this.listingSearch({ flow: "listing_search", step: "query", data: { kind: "buy" } }, text, context);
+    }
+    return null;
+  }
+
+  /**
+   * Wisdom's brain: a free, considered answer to an open question, from everything TrustHub knows about the place.
+   * Returns null only when there is no data at all and no AI, so the caller can fall back.
+   */
+  async brainAnswer(question: string, context: ConnectContext): Promise<ConnectReply | null> {
+    const city = parsePlace(question).city ?? (context.identityId ? await this.store.lastCity(context.identityId).catch(() => null) : null) ?? "Harare";
+    const reference = `${context.providerMessageId ?? `local:brain:${this.now().getTime()}`}:brain`;
+    const worded = this.answerer ? await this.answerer(question, city, reference, context.assistantName).catch(() => null) : null;
+    let body: string;
+    if (worded) body = clipText(worded, 1600);
+    else {
+      const [pulse, signals, news] = await Promise.all([
+        this.store.areaPulse(city, 30).catch(() => null),
+        this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
+        this.store.news ? this.store.news({ text: question, town: city, limit: 3 }).catch(() => []) : Promise.resolve([]),
+      ]);
+      body = brainFallback(question, city, pulse, signals, news);
+      // Without the AI and without any matching data, say nothing here: the normal "try this" help is more useful.
+      if (body.startsWith("I haven't seen anything") && !isAdviceQuestion(question)) return null;
+    }
+    const reply = `${body}\n\n_Ask me a follow-up, or tap Community intelligence for ${city}'s latest._`;
+    return { reply, interactive: buttons(reply, [["menu.area", "Community intel"], ["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
   }
 
   /** A free answer in Community intelligence, from Benita's news, facts and signals; the AI words it when it is available. */
@@ -699,7 +762,7 @@ export class ConnectJourneys {
       this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
       this.store.news ? this.store.news({ town: city, topics: ["prices", "fuel", "money", "power_water", "jobs", "housing", "transport", "scams", "council"], limit: 3 }).catch(() => []) : Promise.resolve([]),
     ]);
-    const firstName = context?.profileName?.trim().split(/\s+/)[0];
+    const firstName = firstNameOf(context?.profileName);
     const greeting = `Hey${firstName ? ` ${firstName}` : ""}! ${context?.assistantName ?? "Wisdom"} here with the latest 👇`;
     const reply = intelligenceBrief(city, greeting, signals, news, pulse);
     return { reply, interactive: buttons(reply.length > 1024 ? `That's ${city} right now. Ask me anything, or pick an option.` : reply, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state: { flow: "area", step: "shown", data: { city } }, action: "answer" };
@@ -793,7 +856,7 @@ export class ConnectJourneys {
   /** Light replies to thanks, goodbyes, small talk and requests for a joke. */
   private socialReply(message: string, context: ConnectContext): ConnectReply | null {
     const name = context.assistantName;
-    const firstName = context.profileName?.trim().split(/\s+/)[0] ?? null;
+    const firstName = firstNameOf(context.profileName);
     const menu: [string, string][] = [["menu.find", "Find a business"], ["btn.menu", "Main menu"]];
     const moment = momentOf(message);
     // "Thanks" and "sorted" can answer a question in progress, so the coordinator decides those.
@@ -802,8 +865,10 @@ export class ConnectJourneys {
     const fallback = moment === "light_joke" ? humourLine(name, message.length) : moment === "smalltalk_weather" ? smalltalkLine(name) : null;
     const line = voiceLine(moment, name, firstName);
     if (!line && !fallback) return null;
-    const close = moment === "light_joke" || moment === "smalltalk_weather" ? `\n\nI'm ${name}, by the way. What can I find for you?` : "\n\nWhat can I find for you?";
-    const body = line ? `${line}${line.includes(name) ? "\n\nWhat can I find for you?" : close}` : fallback!;
+    // One question per message: a line that already asks something isn't followed by another question.
+    const asks = !!line && /\?\s*(?:🙂|❤️)?\s*$/.test(line);
+    const intro = !!line && !line.includes(name) && (moment === "light_joke" || moment === "smalltalk_weather") ? ` I'm ${name}, by the way.` : "";
+    const body = line ? `${line}${asks ? (intro ? `\n\n${intro.trim()}` : "") : `\n\n${intro.trim() ? `${intro.trim()} ` : ""}What can I find for you?`}` : fallback!;
     return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
   }
 

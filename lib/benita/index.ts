@@ -107,9 +107,19 @@ export async function benitaFacts(client: BenitaRpcClient, prefix: string | null
 
 // ------------------------------------------------------------------ WhatsApp text
 
+/** A Zimbabwean mobile number as a WhatsApp link; landlines and run-together numbers are not links. */
 function waLink(phone: string | null): string | null {
-  const digits = phone?.replace(/\D/g, "");
-  return digits && digits.length >= 8 ? `wa.me/${digits}` : null;
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const local = digits.startsWith("263") ? digits.slice(3) : digits.startsWith("0") ? digits.slice(1) : digits;
+  return /^7[1378]\d{7}$/.test(local) ? `wa.me/263${local}` : null;
+}
+
+/** A single landline or mobile number to show as "Call", or null when the stored value is garbled. */
+function callNumber(phone: string | null): string | null {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  if (digits.length < 9 || digits.length > 12) return null;
+  const local = digits.startsWith("263") ? digits.slice(3) : digits.startsWith("0") ? digits.slice(1) : digits;
+  return local.length >= 7 && local.length <= 9 ? `+263 ${local}` : null;
 }
 
 const cut = (value: string, max: number) => (value.length <= max ? value : `${value.slice(0, max - 1).trimEnd()}…`);
@@ -122,9 +132,10 @@ function host(url: string | null): string | null {
 export function benitaLine(result: BenitaResult, index: number): string {
   const where = [result.area, result.city].filter(Boolean).join(", ");
   const facts = [result.priceText, result.kind === "place" ? result.category ?? result.subcategory : null, where || null].filter(Boolean).join(" · ");
-  const contact = waLink(result.whatsapp ?? result.phone);
+  const chat = waLink(result.whatsapp) ?? waLink(result.phone);
+  const contact = chat ? `WhatsApp: ${chat}` : callNumber(result.phone) ? `Call: ${callNumber(result.phone)}` : null;
   const from = result.tier === "discovered" && host(result.sourceUrl) ? ` (${host(result.sourceUrl)})` : "";
-  return `${index + 1}. *${cut(result.name, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `Contact: ${contact} · ` : ""}${result.tierLabel}${from}`;
+  return `${index + 1}. *${cut(result.name, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `${contact} · ` : ""}${result.tierLabel}${from}`;
 }
 
 /** A complete reply for a list of Benita results. */
@@ -169,6 +180,10 @@ export function factReply(kind: "fuel" | "fx", facts: BenitaFact[]): string | nu
       "", "Stations may sell below these prices, never above them.",
     ].join("\n");
   }
-  const fx = wanted[0];
-  return [`*Official exchange rate* (RBZ, ${longDate(fx.effectiveFrom)})`, "", `1 US dollar = ${fx.value !== null ? money(fx.value, "ZWG") : fx.valueText}`, "", "Banks and shops may use a slightly different rate."].join("\n");
+  // The US dollar rate leads; the others follow. Never present another currency's rate as the dollar's.
+  const usd = wanted.find((fact) => fact.key === "fx.usd_zwg");
+  if (!usd) return null;
+  const names: Record<string, string> = { "fx.gbp_zwg": "British pound", "fx.eur_zwg": "Euro", "fx.zar_zwg": "SA rand", "fx.bwp_zwg": "Botswana pula" };
+  const others = wanted.filter((fact) => fact.key !== usd.key && names[fact.key] && fact.value !== null).map((fact) => `1 ${names[fact.key]} = ${money(fact.value!, "ZWG")}`);
+  return [`*Official exchange rate* (RBZ, ${longDate(usd.effectiveFrom)})`, "", `1 US dollar = ${usd.value !== null ? money(usd.value, "ZWG") : usd.valueText}`, ...(others.length ? ["", ...others] : []), "", "Banks and shops may use a slightly different rate."].join("\n");
 }

@@ -40,9 +40,10 @@ test("symptoms suggest the right service, and a phrase with materially different
   assert.equal(stuck?.category, null);
   assert.deepEqual(stuck?.ambiguity?.options.sort(), ["mechanic", "roadside assistance"]);
   assert.match(stuck?.ambiguity?.question ?? "", /mechanic or roadside assistance/);
-  const bare = parseLocalSearchRequest("I need a school");
-  assert.equal(bare?.category, null);
-  assert.match(bare?.ambiguity?.question ?? "", /school or driving school/);
+  // "school" on its own means a school; people who want driving lessons say so.
+  const bare = parseLocalSearchRequest("I need a school in Gweru");
+  assert.equal(bare?.ambiguity ?? null, null);
+  assert.equal(bare?.serviceConcept, "school");
   assert.equal(parseLocalSearchRequest("I need lessons")?.ambiguity?.options.length, 2);
 });
 

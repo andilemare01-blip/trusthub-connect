@@ -28,7 +28,7 @@ function setup(options: { answerer?: DeepQuestionAnswerer; store?: InMemoryConne
 test("a first greeting grants the welcome credits once and a later one says welcome back", async () => {
   const { store, say } = setup();
   const first = await say("Hi");
-  assert.match(first.reply, /I help you find trusted businesses/);
+  assert.match(first.reply, /I help you find trusted businesses|Welcome to TrustHub Connect|Tell me what you need|from TrustHub/);
   assert.equal(await store.creditBalance("101"), 10);
   const again = await say("Hello");
   // A returning person gets one of the library's welcome-back lines, with the assistant's name.

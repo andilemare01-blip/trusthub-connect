@@ -26,19 +26,40 @@ function hours(openingHours: Record<string, unknown> | null | undefined): string
 }
 
 /** One WhatsApp-ready card. Only fields that exist are shown; nothing is invented. */
+/** A Zimbabwean mobile number as a tappable WhatsApp link, or null for landlines and anything malformed. */
+export function whatsappLink(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/[^\d+]/g, "");
+  const local = digits.startsWith("+263") ? digits.slice(4) : digits.startsWith("263") ? digits.slice(3) : digits.startsWith("0") ? digits.slice(1) : null;
+  return local && /^7[1378]\d{7}$/.test(local) ? `wa.me/263${local}` : null;
+}
+
+/** A phone number that is one real number, or null (some sources run several numbers together). */
+function cleanPhone(phone: string | null | undefined): string | null {
+  const value = (phone ?? "").trim();
+  const digits = value.replace(/\D/g, "");
+  return value && digits.length >= 7 && digits.length <= 13 ? value : null;
+}
+
 export function formatListing(item: EvidenceItem, position?: number): string {
   const details = item.businessDetails;
   const heading = `${position ? `${position}. ` : ""}*${(item.name ?? "").trim() || "Unnamed listing"}*`;
-  const subtitle = [item.category?.trim(), place(details)].filter(Boolean).join(" · ");
-  const contact = [details?.phone && `Phone: ${details.phone}`, details?.whatsapp && `WhatsApp: ${details.whatsapp}`].filter(Boolean).join("  ");
+  const where = place(details);
+  const subtitle = [item.category?.trim(), where].filter(Boolean).join(" · ");
+  const phone = cleanPhone(details?.phone);
+  const chat = whatsappLink(details?.whatsapp) ?? whatsappLink(phone);
+  const contact = [phone && `Phone: ${phone}`, chat && `WhatsApp: ${chat}`].filter(Boolean).join(" · ");
+  // An address that only repeats the suburb and town adds nothing.
+  const address = details?.address?.trim();
+  const addsSomething = !!address && !(where && where.toLocaleLowerCase().includes(address.toLocaleLowerCase())) && address.toLocaleLowerCase() !== (details?.city ?? "").toLocaleLowerCase();
+  const status = describeVerification(item);
   const lines = [
     heading,
     subtitle,
-    details?.address && `Address: ${details.address}`,
+    addsSomething && `Address: ${address}`,
     contact,
     details?.website && `Website: ${details.website}`,
     hours(details?.openingHours) && `Hours: ${hours(details?.openingHours)}`,
-    `Source: ${item.sourceLabel}; ${describeVerification(item)}`,
+    `_${status.charAt(0).toUpperCase()}${status.slice(1)}_`,
   ].filter((line): line is string => typeof line === "string" && line.length > 0);
   return lines.join("\n");
 }

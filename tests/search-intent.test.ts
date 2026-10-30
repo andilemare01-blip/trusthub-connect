@@ -111,7 +111,7 @@ test("Hi, I'm looking for a driving school, Harare: the original category is kep
   assert.match(answered.reply, /Safe Roads Driving School/);
   assert.match(answered.reply, /Premier Motors/);
   assert.doesNotMatch(answered.reply, /Bulawayo Driving School|Eastlea Plumbing|Corner Bakery|enough reliable information/);
-  assert.match(answered.reply, /TrustHub businesses record; listed in TrustHub records, not independently verified/);
+  assert.match(answered.reply, /Listed in TrustHub records, not independently verified/);
   assert.doesNotMatch(answered.reply, /verified by TrustHub/);
 });
 

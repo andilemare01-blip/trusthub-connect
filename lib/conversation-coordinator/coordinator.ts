@@ -6,7 +6,8 @@ import type { RuntimeConversationRepository } from "./repository";
 import { createAnswerGenerator } from "../answer-resolution/response-generator.ts";
 import type { AnswerGenerator } from "@/types/answer";
 import { ASSISTANT_NAMES, assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, type WisdomLibrary } from "./wisdom-library.ts";
-import { momentOf, voiceLine } from "../connect/voice.ts";
+import { firstNameOf, momentOf, voiceLine } from "../connect/voice.ts";
+import { isAdviceQuestion, isOpenQuestion } from "../connect/brain.ts";
 
 /** A different one of the ten names for a new visit, chosen from the person and the time so it is repeatable. */
 export function rotateAssistantName(base: string, at: string, current: string): string {
@@ -142,6 +143,24 @@ export function evidenceMatchesRequest(item: EvidenceItem, request: NormalizedRe
   return long.some((term) => term.length >= 4 && name.includes(term));
 }
 
+/**
+ * Puts the listings that are plainly what was asked for first ("Regency Hotel" before "Bushmaid Campsite"
+ * for "hotel") and drops unrelated ones ("Laundry Mart" for "plumber") when there are real matches.
+ */
+export function focusEvidence(resolution: ResolutionResult, request: NormalizedRequest | null): ResolutionResult {
+  if (!request?.category || !resolution.evidence.length) return resolution;
+  const listings = resolution.evidence.filter((item) => item.kind === "listing");
+  if (listings.length < 2) return resolution;
+  const terms = requestTerms(request).filter((term) => term.length >= 4);
+  const strength = (item: EvidenceItem) => {
+    const name = (item.name ?? "").toLocaleLowerCase();
+    return (terms.some((term) => name.includes(term)) ? 2 : 0) + (evidenceMatchesRequest(item, request) ? 1 : 0);
+  };
+  const ranked = listings.map((item, index) => ({ item, index, score: strength(item) })).sort((a, b) => b.score - a.score || a.index - b.index);
+  const kept = ranked.some((entry) => entry.score > 0) ? ranked.filter((entry) => entry.score > 0) : ranked;
+  return { ...resolution, evidence: [...resolution.evidence.filter((item) => item.kind !== "listing"), ...kept.map((entry) => entry.item)] };
+}
+
 const nameKey = (name: string) => name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 /** The light, every-time invitation that turns each answer into more data. */
@@ -188,9 +207,9 @@ function normalizeButtonText(text: string): string {
 }
 
 /** Attaches reply buttons only when the whole reply fits WhatsApp's interactive body limit. */
+/** Buttons for a reply. A long reply keeps its buttons: the full text is sent first and the buttons follow. */
 function withButtons(reply: string, items: [id: string, title: string][]): WhatsAppInteractiveMessage | undefined {
-  if (reply.length > 1024) return undefined;
-  return { type: "button", body: reply, buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })) };
+  return { type: "button", body: reply.length > 1024 ? "What would you like to do next?" : reply, buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })) };
 }
 
 export interface CoordinatorConnectOptions {
@@ -276,6 +295,15 @@ export class ConversationCoordinator {
     // 1b. Public facts people ask every day (fuel ceilings, the ZiG rate) come straight from Benita.
     const fact = !turn.media?.length ? await this.factAnswer(turn.text) : null;
     if (fact) return await this.finishConnect(conversation, turn, fact, priorState, at);
+
+    // 1c. Open questions ("what business should I start in Harare?", "how much is rent in Avondale?") go to Wisdom's brain.
+    // "Recommend a good plumber in Harare" is still a search: the brain takes questions with no service to find,
+    // or ones that are plainly about advice ("should I", "in demand", "start a business", "how much").
+    const wantsAdvice = isOpenQuestion(turn.text ?? "") && (!turn.request?.category || isAdviceQuestion(turn.text ?? ""));
+    if (!turn.media?.length && !conversation.pendingPermission && wantsAdvice) {
+      const thought = await this.connect.journeys.brainAnswer(turn.text, connectContext).catch(() => null);
+      if (thought) return await this.finishConnect(conversation, turn, thought, priorState, at);
+    }
 
     // 2. Natural-language requests for a guided flow join that flow instead of the old dead-end prompts.
     const intended = await this.connectIntent(turn, connectContext);
@@ -389,10 +417,17 @@ export class ConversationCoordinator {
       } else {
         // "Thanks", "sorted!", "who are you?": everyday moments get a line from the Wisdom library, not "I didn't understand".
         const moment = momentOf(turn.text ?? "");
-        const said = moment ? voiceLine(moment, conversation.assistantName ?? "Wisdom", turn.profileName?.trim().split(/\s+/)[0] ?? null) : null;
+        const said = moment ? voiceLine(moment, conversation.assistantName ?? "Wisdom", firstNameOf(turn.profileName)) : null;
         // Before admitting we didn't understand, ask Benita: "who sells cement in Gweru" often matches even when the parser can't place it.
         const found = said ? null : await this.benitaFreeText(turn.text ?? "");
-        if (said) {
+        // A real sentence nothing else understood is still a question for a person: Wisdom's brain answers it.
+        const thought = !said && !found && (turn.text ?? "").trim().split(/\s+/).length >= 4 ? await this.connect.journeys.brainAnswer(turn.text ?? "", connectContext).catch(() => null) : null;
+        if (thought) {
+          action = "answer";
+          reply = thought.reply;
+          interactive = thought.interactive;
+          nextState = "ready_for_request";
+        } else if (said) {
           action = "answer";
           reply = moment === "thanks" || moment === "solved" ? `${said}\n\nAnything else I can find for you?` : said;
           interactive = withButtons(reply, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]);
@@ -462,7 +497,7 @@ export class ConversationCoordinator {
       const added = await this.connect.store.benitaLive({ text: searched!.category!, city: searched!.location!.city!, terms: requestTerms(searched!) }).catch(() => 0);
       if (added > 0) wider = await this.benitaForRequest(searched!);
     }
-    const own = new Set(onTopic.map((item) => nameKey(item.name ?? "")));
+    const own = new Set(directoryListings.map((item) => nameKey(item.name ?? "")));
     const extra = wider.filter((found) => !own.has(nameKey(found.name))).slice(0, 3);
     const benitaLeads = (emptyDirectory || offTopicOnly) && wider.length > 0;
     if (benitaLeads) {
@@ -518,7 +553,11 @@ export class ConversationCoordinator {
     const extraTerms = requestTerms(request).filter((term) => term !== request.category?.toLocaleLowerCase()).slice(0, 8);
     const text = [request.entityName, request.category, request.serviceConcept].filter(Boolean).join(" ") || request.text;
     try {
-      return await this.connect.store.benitaSearch({ text, city: request.location?.city ?? null, limit: 5, kinds: ["place"], extraTerms });
+      const found = await this.connect.store.benitaSearch({ text, city: request.location?.city ?? null, limit: 8, kinds: ["place"], extraTerms });
+      // Keep the results that are plainly the thing asked for ("Aquaseal Plumbers", not "Laundry Mart"), when there are any.
+      const terms = requestTerms(request).filter((term) => term.length >= 4);
+      const plain = found.filter((result) => terms.some((term) => `${result.name} ${result.category ?? ""} ${result.subcategory ?? ""}`.toLocaleLowerCase().includes(term)));
+      return (plain.length ? plain : found).slice(0, 5);
     } catch (error) {
       console.error(JSON.stringify({ event: "benita.search_failed", errorType: error instanceof Error ? error.name : "unknown" }));
       return [];
@@ -619,7 +658,8 @@ export class ConversationCoordinator {
     };
   }
 
-  private resolve(request: NormalizedRequest, context: ResolverContext) { return this.resolver.resolve(request, context); }
+  /** Every directory answer is focused on what was asked: the closest matches first, unrelated ones dropped. */
+  private async resolve(request: NormalizedRequest, context: ResolverContext) { return focusEvidence(await this.resolver.resolve(request, context), request); }
 
   private async continueClarification(pending: NormalizedRequest, text: string, allowCityChange = false): Promise<NormalizedRequest | null> {
     const next = continueClarifiedRequest(pending, text, allowCityChange);

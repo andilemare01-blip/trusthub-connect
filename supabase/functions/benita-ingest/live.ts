@@ -11,11 +11,11 @@
  */
 import { rest, rpc, source, upsert } from "./db.ts";
 import { clean, searchText, zwPhone, zwPhonesIn } from "./normalise.ts";
-import { classify, ENDPOINTS, OVERPASS_AGENT, TOWNS } from "./osm.ts";
+import { classify, OVERPASS_AGENT, TOWNS } from "./osm.ts";
 
 export interface LiveResult { saved: number; map: number; web: number; engine: string | null; town: string | null; error?: string }
 
-const KEYS = "shop|amenity|tourism|office|craft|healthcare|leisure";
+const KIND_KEY = /^(shop|amenity|tourism|office|craft|healthcare|leisure)$/;
 /** Pages that list many places, or that we do not take facts from, are not one business. */
 const NOT_ONE_PLACE = /\b(best|top \d+|cheap(est)?|list of|directory|things to do|near me|search results?|vacanc|jobs?|for sale|to let|for rent|reviews of|compare|deals)\b|\b\d+\s+(hotels|lodges|places|properties)\b|^(hotels|lodges|accommodation)\s+in\b/i;
 const SKIP_HOSTS = /(^|\.)(facebook|instagram|tiktok|x|twitter|linkedin|youtube|pinterest|wikipedia)\.(com|org)$/i;
@@ -35,30 +35,46 @@ async function fetchWithin(url: string, init: RequestInit, ms: number): Promise<
   return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
 }
 
-/** Named places of the asked-for kind within 15 km of the town. */
+const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const near = (aLat: number, aLon: number, bLat: number, bLon: number) => Math.abs(aLat - bLat) < 0.25 && Math.abs(aLon - bLon) < 0.25;
+
+/**
+ * Named places of the asked-for kind in the town, from OpenStreetMap's search service (Nominatim).
+ * Overpass is too slow and often "at capacity" for a person waiting on WhatsApp; Nominatim answers in about a second.
+ * Its usage policy allows one request a second with a descriptive agent, so at most three words are asked, a second apart.
+ */
 async function fromMap(town: { name: string; lat: number; lon: number }, words: string[], deadline: number): Promise<Record<string, unknown>[]> {
-  const tagValues = words.map((word) => word.replace(/ /g, "_")).join("|");
-  const nameWords = words.filter((word) => word.length >= 4).join("|");
-  const around = `(around:15000,${town.lat},${town.lon})`;
-  const query = `[out:json][timeout:8];(nwr${around}[~"^(${KEYS})$"~"^(${tagValues})$",i][name];${nameWords ? `nwr${around}[name~"${nameWords}",i][~"^(${KEYS})$"~"."];` : ""});out center tags 25;`;
-  let data: { elements?: Record<string, unknown>[] } | null = null;
-  for (const endpoint of ENDPOINTS) {
+  const elements = new Map<string, Record<string, unknown>>();
+  // The asked-for word first, then its plainest synonyms ("lodge", not "inns").
+  const asked = [words[0], ...words.slice(1).filter((word) => word.length >= 4 && !word.endsWith("s"))].slice(0, 3);
+  for (const [index, word] of asked.entries()) {
+    if (index) await new Promise((resolve) => setTimeout(resolve, 1_100));
     const left = deadline - Date.now();
-    if (left < 2_500) break;
+    if (left < 1_500) break;
     try {
-      const response = await fetchWithin(`${endpoint}?data=${encodeURIComponent(query)}`, { headers: { "user-agent": OVERPASS_AGENT, accept: "application/json" } }, Math.min(left - 500, 6_000));
-      if (response.ok) { data = await response.json(); break; }
-    } catch { /* next server */ }
+      const params = new URLSearchParams({ q: `${word} in ${town.name}`, countrycodes: "zw", format: "jsonv2", extratags: "1", addressdetails: "1", limit: "20" });
+      const response = await fetchWithin(`${NOMINATIM}?${params}`, { headers: { "user-agent": OVERPASS_AGENT, accept: "application/json" } }, Math.min(left - 300, 5_000));
+      if (!response.ok) continue;
+      for (const hit of await response.json() as Record<string, unknown>[]) {
+        const lat = Number(hit.lat), lon = Number(hit.lon);
+        if (!hit.name || !near(lat, lon, town.lat, town.lon)) continue;
+        const extra = (hit.extratags ?? {}) as Record<string, string>, address = (hit.address ?? {}) as Record<string, string>;
+        const tags: Record<string, string> = { ...extra, name: String(hit.name), [String(hit.category)]: String(hit.type) };
+        if (address.suburb ?? address.neighbourhood) tags["addr:suburb"] = address.suburb ?? address.neighbourhood;
+        if (address.road) tags["addr:street"] = address.road;
+        if (address.house_number) tags["addr:housenumber"] = address.house_number;
+        elements.set(`${hit.osm_type}:${hit.osm_id}`, { type: hit.osm_type, id: hit.osm_id, lat, lon, tags });
+      }
+    } catch { /* the next word, or the web */ }
   }
-  if (!data?.elements?.length) return [];
+  if (!elements.size) return [];
   const src = await source("osm");
   const now = new Date().toISOString();
-  return data.elements.flatMap((el) => {
+  return [...elements.values()].flatMap((el) => {
     const t = (el.tags ?? {}) as Record<string, string>;
     const name = clean(t.name, 200);
-    const lat = (el.lat ?? (el.center as { lat?: number })?.lat) as number | undefined;
-    const lon = (el.lon ?? (el.center as { lon?: number })?.lon) as number | undefined;
-    if (!name || lat === undefined || lon === undefined || t.disused) return [];
+    const lat = el.lat as number, lon = el.lon as number;
+    if (!name || t.disused || !Object.keys(t).some((key) => KIND_KEY.test(key))) return []; // a road or a suburb is not a business
     const { recordType, category, sub } = classify(t);
     const area = clean(t["addr:suburb"], 80);
     const phone = zwPhone(t.phone ?? t["contact:phone"] ?? t["contact:mobile"]);

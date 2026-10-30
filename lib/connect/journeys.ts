@@ -17,6 +17,7 @@ import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSe
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
 import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
 import { momentOf, voiceLine } from "./voice.ts";
+import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
@@ -282,7 +283,7 @@ export class ConnectJourneys {
         return { reply: "Tap *Find a place* or *List a place*, or type MENU to go back.", interactive: buttons("Are you looking for a place, or offering one?", [["btn.find_place", "Find a place"], ["btn.list_place", "List a place"]]), state, action: "clarify" };
       case "listing": return await this.listing(state, text, context);
       case "listing_search": return await this.listingSearch(state, text, context);
-      case "area": return await this.area(state, text);
+      case "area": return await this.area(state, text, context);
       case "scam": return await this.scam(state, text, context);
       case "ask": return await this.ask(state, text, context);
       case "read_reviews": return await this.readReviewsFromText(text);
@@ -652,36 +653,56 @@ export class ConnectJourneys {
       const body = "Which town should I show? Tap one or type another.";
       return { reply: body, interactive: buttons(body, [["town:Harare", "Harare"], ["town:Bulawayo", "Bulawayo"], ["town:Chinhoyi", "Chinhoyi"]]), state: { flow: "area", step: "town", data: {} }, action: "start_journey" };
     }
-    return await this.pulse(city);
+    return await this.pulse(city, context);
   }
 
-  private async area(state: ConnectJourneyState, text: string): Promise<ConnectReply> {
+  private async area(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply> {
     const tapped = /^town:(.+)$/.exec(text.trim())?.[1];
     if (state.step === "shown") {
-      if (tapped) return await this.pulse(tapped);
+      if (tapped) return await this.pulse(tapped, context);
       if (chose(text, "btn.change_area", "change area", "change")) {
         const body = "Which town should I show? Tap one or type another.";
         return { reply: body, interactive: buttons(body, [["town:Harare", "Harare"], ["town:Bulawayo", "Bulawayo"], ["town:Chinhoyi", "Chinhoyi"]]), state: { flow: "area", step: "town", data: {} }, action: "clarify" };
       }
-      // Anything else after the pulse is a new request for the coordinator.
+      // A question about prices, money, news or the town is a conversation with Community intelligence.
+      const city = String(state.data.city ?? "Harare");
+      const moment = momentOf(text);
+      if (moment === "thanks" || moment === "goodbye" || moment === "smalltalk_weather") {
+        const line = voiceLine(moment, context.assistantName, context.profileName?.trim().split(/\s+/)[0] ?? null) ?? "Anytime!";
+        const body = moment === "goodbye" ? line : `${line}\n\nAnything else you want to know about ${city}?`;
+        return { reply: body, interactive: buttons(body, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state, action: "answer" };
+      }
+      if (isIntelligenceQuestion(text)) return await this.intelligenceAnswer(text, city, context, state);
+      // Anything else is a new request for the coordinator.
       return { reply: "", state: null, action: "answer", pass: true };
     }
     const city = tapped ?? parsePlace(text).city ?? (text.trim().split(/\s+/).length <= 3 && /^[\p{L}\s'-]+$/u.test(text.trim()) ? text.trim().replace(/(^|\s)(\p{L})/gu, (_, gap: string, letter: string) => gap + letter.toLocaleUpperCase()) : null);
     if (!city) return { reply: "Which town? For example: *Harare*.", state: { flow: "area", step: "town", data: {} }, action: "clarify" };
-    return await this.pulse(city);
+    return await this.pulse(city, context);
   }
 
-  private async pulse(city: string): Promise<ConnectReply> {
-    const pulse = await this.store.areaPulse(city, 7);
-    const sections: string[] = [`*${city} this week*`];
-    if (pulse.topSearches.length) sections.push(["", "*Most searched*", ...pulse.topSearches.map((item, index) => `${index + 1}. ${item.label} · ${item.count} ${item.count === 1 ? "search" : "searches"}`)].join("\n"));
-    if (pulse.notFound.length) sections.push(["", "*Asked for, but not found*", ...pulse.notFound.map((item) => `• ${item.label} · ${item.count} ${item.count === 1 ? "time" : "times"}`), "People want these and nobody is listed. That's a business opportunity."].join("\n"));
-    if (pulse.newBusinesses || pulse.newListings) sections.push(["", "*New near you*", `${pulse.newBusinesses} new ${pulse.newBusinesses === 1 ? "business" : "businesses"} · ${pulse.newListings} new ${pulse.newListings === 1 ? "listing" : "listings"}`].join("\n"));
-    if (pulse.typicalPrices.length) sections.push(["", "*Typical prices*", ...pulse.typicalPrices.map((item) => `• ${item.label}: ${item.currency === "USD" ? "$" : `${item.currency} `}${Math.round(item.median)} (from ${item.samples} listings)`)].join("\n"));
-    if (sections.length === 1) sections.push("", `It's early days for ${city}: there aren't enough searches yet this week to show trends. Every search people make helps build this picture.`);
-    else sections.push("", `_Based on TrustHub searches and listings in ${city} over the last 7 days._`);
-    const reply = sections.join("\n");
-    return { reply, interactive: buttons(reply, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state: { flow: "area", step: "shown", data: { city } }, action: "answer" };
+  /** A free answer in Community intelligence, from Benita's news, facts and signals; the AI words it when it is available. */
+  private async intelligenceAnswer(question: string, city: string, context: ConnectContext, state: ConnectJourneyState): Promise<ConnectReply> {
+    const [news, signals] = await Promise.all([
+      this.store.news ? this.store.news({ text: question, town: city, limit: 4 }).catch(() => []) : Promise.resolve([]),
+      this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
+    ]);
+    const reference = `${context.providerMessageId ?? `local:intel:${this.now().getTime()}`}:intel`;
+    const worded = this.answerer ? await this.answerer(`(Community intelligence about ${city}) ${question}`, city, reference, context.assistantName).catch(() => null) : null;
+    const body = `${worded ? clipText(worded, 1400) : intelligenceFallback(question, city, signals, news)}\n\n_Ask another, or tap Main menu._`;
+    return { reply: body, interactive: buttons(body, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state, action: "answer" };
+  }
+
+  private async pulse(city: string, context?: ConnectContext): Promise<ConnectReply> {
+    const [pulse, signals, news] = await Promise.all([
+      this.store.areaPulse(city, 7).catch(() => null),
+      this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
+      this.store.news ? this.store.news({ town: city, topics: ["prices", "fuel", "money", "power_water", "jobs", "housing", "transport", "scams", "council"], limit: 3 }).catch(() => []) : Promise.resolve([]),
+    ]);
+    const firstName = context?.profileName?.trim().split(/\s+/)[0];
+    const greeting = `Hey${firstName ? ` ${firstName}` : ""}! ${context?.assistantName ?? "Wisdom"} here with the latest 👇`;
+    const reply = intelligenceBrief(city, greeting, signals, news, pulse);
+    return { reply, interactive: buttons(reply.length > 1024 ? `That's ${city} right now. Ask me anything, or pick an option.` : reply, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state: { flow: "area", step: "shown", data: { city } }, action: "answer" };
   }
 
   // ------------------------------------------------------------ scam check

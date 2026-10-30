@@ -4,6 +4,7 @@
  * by row-level security. Errors are thrown with the operation name only, never
  * with row contents or phone numbers.
  */
+import type { NewsItem, TownSignals } from "./store.ts";
 import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
 import { listingPrice, refineListings } from "./store.ts";
@@ -357,6 +358,30 @@ export class SupabaseConnectStore implements ConnectStore {
       console.error(JSON.stringify({ event: "benita.live_failed", errorType: error instanceof Error ? error.name : "unknown" }));
       return 0;
     }
+  }
+
+  async news(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }): Promise<NewsItem[]> {
+    const rpc = this.db.rpc;
+    if (!rpc) return [];
+    const result = await rpc.call(this.db, "benita_news_latest", { p_topics: query.topics?.length ? query.topics : null, p_town: query.town ?? null, p_query: query.text ?? null, p_limit: query.limit ?? 5, p_days: query.text ? 60 : 14 });
+    if (result.error || !Array.isArray(result.data)) return [];
+    return (result.data as Row[]).map((row) => ({ title: String(row.title ?? ""), summary: text(row.summary), url: String(row.url ?? ""), source: String(row.source_name ?? ""), publishedAt: text(row.published_at), topics: Array.isArray(row.topics) ? row.topics.map(String) : [] }));
+  }
+
+  async signals(city: string): Promise<TownSignals | null> {
+    const rpc = this.db.rpc;
+    if (!rpc) return null;
+    const result = await rpc.call(this.db, "benita_signals", { p_city: city });
+    if (result.error || !result.data || typeof result.data !== "object") return null;
+    const data = result.data as Record<string, unknown>;
+    const list = (value: unknown) => Array.isArray(value) ? value as Row[] : [];
+    const num = (value: unknown) => value === null || value === undefined || value === "" ? null : Number(value);
+    return {
+      facts: list(data.facts).map((row) => ({ key: String(row.key), label: String(row.label ?? row.key), value: num(row.value), previous: num(row.previous), unit: text(row.unit), currency: text(row.currency), asOf: String(row.asOf ?? "") })),
+      rents: list(data.rents).map((row) => ({ area: String(row.area), median: Number(row.median), listings: Number(row.listings) })),
+      cars: list(data.cars).map((row) => ({ model: String(row.model), median: Number(row.median), listings: Number(row.listings) })),
+      jobsTotal: Number(data.jobsTotal ?? 0),
+    };
   }
 
   async activity(identityId: string): Promise<IdentityActivity> {

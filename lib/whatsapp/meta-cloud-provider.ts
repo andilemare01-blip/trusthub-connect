@@ -35,6 +35,13 @@ export class MetaCloudWhatsAppProvider implements WhatsAppProvider {
       logWhatsAppDiagnostic(requestId, "meta_outbound_response", { outcome: "failed", ...diagnosticError(error), durationMs: Date.now() - startedAt });
       throw error;
     }
+    // WhatsApp caps a message with buttons at 1,024 characters. A longer reply goes out in full as text first,
+    // then the buttons follow with a short prompt, so nothing is cut off.
+    if (message.interactive && message.text && message.text.length > 1024) {
+      await this.sendMessage({ ...message, interactive: undefined, text: message.text.slice(0, 4096) });
+      const shortBody = message.interactive.body && message.interactive.body.length < 400 && !message.text.startsWith(message.interactive.body) ? message.interactive.body : "What would you like to do next?";
+      message = { ...message, text: shortBody, interactive: { ...message.interactive, body: shortBody } };
+    }
     let payload: any;
     if (message.interactive?.type === "button" && message.interactive.buttons?.length) {
       payload = {

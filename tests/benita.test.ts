@@ -277,3 +277,14 @@ test("'Thanks' and 'who are you?' get a lively Wisdom line, never 'I didn't unde
   const who = await say("are you a bot?");
   assert.ok(who.reply.includes(who.conversation.assistantName ?? "?"), who.reply);
 });
+
+test("the exchange-rate answer always quotes the US dollar rate, whatever order the facts come in", () => {
+  const facts: BenitaFact[] = [
+    { key: "fx.bwp_zwg", label: "ZiG per BWP", value: 1.8781, valueText: null, unit: "ZWG per BWP", currency: "ZWG", effectiveFrom: "2026-10-29", sourceKey: "rbz", sourceUrl: null },
+    ...FX,
+  ];
+  const reply = factReply("fx", facts)!;
+  assert.match(reply, /1 US dollar = ZiG 26\.61/);
+  assert.match(reply, /1 Botswana pula = ZiG 1\.88/);
+  assert.equal(factReply("fx", facts.slice(0, 1)), null, "no dollar rate, no dollar answer");
+});

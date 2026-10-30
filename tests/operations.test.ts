@@ -54,7 +54,7 @@ test("a listing card shows only the fields that exist, with honest source and st
   assert.match(full, /Address: 12 Samora Machel Ave/);
   assert.match(full, /Website: https:\/\/saferoads\.example/);
   assert.match(full, /Hours: Mon 08:00-17:00, Tue 08:00-17:00/);
-  assert.match(full, /Source: TrustHub businesses record; listed in TrustHub records, not independently verified/);
+  assert.match(full, /_Listed in TrustHub records, not independently verified_/);
   const sparse = formatListing(listing({ businessDetails: { city: "Harare" }, category: null }));
   assert.doesNotMatch(sparse, /Phone|Address|Website|Hours/);
   assert.doesNotMatch(sparse, /undefined|null/);

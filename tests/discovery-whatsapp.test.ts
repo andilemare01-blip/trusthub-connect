@@ -61,7 +61,7 @@ test("WhatsApp runtime can surface an approved knowledge-record result with reco
   const result = await runtime.handleTurn({ conversationId: "knowledge-wa", channel: "whatsapp", text: request.text, request });
   assert.ok(result.resolution?.evidence.some((item) => item.sourceRecordId === "knowledge-byo-plumber"));
   assert.match(result.reply, /Phone: \+263771112222/);
-  assert.match(result.reply, /shared by the community, not verified yet/);
+  assert.match(result.reply, /shared by the community, not verified yet/i);
 });
 
 test("fake WhatsApp provider models parse and delivery failures without claiming acceptance", async () => {

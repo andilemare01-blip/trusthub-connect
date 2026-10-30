@@ -28,8 +28,8 @@ export const FREE_MODEL_OUTPUT_USD_PER_MILLION = 0;
 /** Default OpenRouter chat-completions endpoint. Overridable with AI_PROVIDER_BASE_URL. */
 export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
-/** A currently available free OpenRouter model used when AI_PROVIDER_MODEL is not set. Free models rotate; this is a fallback, not a guarantee. */
-export const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
+/** OpenRouter's free router: it sends each call to a free model that is working at the time. Used when AI_PROVIDER_MODEL is not set. */
+export const DEFAULT_OPENROUTER_MODEL = "openrouter/free";
 
 /**
  * Tried after the configured model when it fails for a reason another model
@@ -38,9 +38,9 @@ export const DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free";
  * Set AI_PROVIDER_MODEL to a cheap paid model for reliable answers.
  */
 export const FALLBACK_OPENROUTER_MODELS = [
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemma-3-27b-it:free",
-  "openai/gpt-oss-20b:free",
+  "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "google/gemma-4-26b-a4b-it:free",
 ];
 
 function positive(value: string | undefined): number | null {
@@ -83,9 +83,10 @@ export function readAiConfig(env: Record<string, string | undefined> = process.e
     config: {
       apiKey, baseUrl, model, models, inputUsdPerMillion, outputUsdPerMillion,
       spendLimitMicroUsd: Math.round(limitUsd * 1_000_000),
-      maxInputTokens: Math.min(positive(env.AI_MAX_INPUT_TOKENS) ?? 1200, 8000),
-      maxOutputTokens: Math.min(positive(env.AI_MAX_OUTPUT_TOKENS) ?? 300, 1500),
-      timeoutMs: Math.min(positive(env.AI_TIMEOUT_MS) ?? 8000, 20000),
+      // Wisdom's brain reads a town's searches, prices, news and listings in one call, so it needs room.
+      maxInputTokens: Math.min(positive(env.AI_MAX_INPUT_TOKENS) ?? 6000, 16000),
+      maxOutputTokens: Math.min(positive(env.AI_MAX_OUTPUT_TOKENS) ?? 600, 1500),
+      timeoutMs: Math.min(positive(env.AI_TIMEOUT_MS) ?? 12000, 20000),
       httpReferer: (env.AI_PROVIDER_HTTP_REFERER?.trim() ?? env.OPENROUTER_HTTP_REFERER?.trim()) || undefined,
       appTitle: (env.AI_PROVIDER_APP_TITLE?.trim() ?? env.OPENROUTER_APP_TITLE?.trim()) || undefined,
     },

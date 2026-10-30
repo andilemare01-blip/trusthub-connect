@@ -36,6 +36,8 @@ export interface AiAttemptFailure { reason: AiFailure; model: string; providerSt
  */
 const RETRYABLE: ReadonlySet<AiFailure> = new Set<AiFailure>(["model_access", "rate_limited", "invalid_response"]);
 
+let freeModels: { at: number; ids: string[] } | null = null;
+
 /** One logical call per key, no retries of the same model, a fallback chain of models, hard input/output limits and a recorded-spend ceiling. */
 export class AiGateway {
   private readonly status: AiConfigStatus;
@@ -77,8 +79,33 @@ export class AiGateway {
         last = await this.attempt(request, model, index, inputTokens, worstCase);
         if (last.ok || !RETRYABLE.has(last.reason)) return last;
       }
+      // Every configured model is gone (free models are retired without notice): find the free models
+      // OpenRouter offers today and try those, so Wisdom repairs itself instead of going quiet.
+      if (!last.ok && last.reason === "model_access" && config.inputUsdPerMillion === 0 && Date.now() - started < config.timeoutMs) {
+        const fresh = (await this.currentFreeModels(config.baseUrl)).filter((model) => !models.includes(model)).slice(0, 3);
+        for (const [offset, model] of fresh.entries()) {
+          if (Date.now() - started >= config.timeoutMs) break;
+          last = await this.attempt(request, model, models.length + offset, inputTokens, worstCase);
+          if (last.ok || !RETRYABLE.has(last.reason)) return last;
+        }
+      }
       return last;
     } finally { this.inFlight.delete(request.key); }
+  }
+
+  /** Today's free chat models on OpenRouter, newest first, cached for six hours. */
+  private async currentFreeModels(baseUrl: string): Promise<string[]> {
+    if (freeModels && Date.now() - freeModels.at < 6 * 3_600_000) return freeModels.ids;
+    try {
+      const response = await this.fetchImpl(`${baseUrl}/models`, { signal: AbortSignal.timeout(4000) });
+      const body = await response.json() as { data?: { id?: string; created?: number; architecture?: { output_modalities?: string[] } }[] };
+      const ids = (body.data ?? [])
+        .filter((model) => typeof model.id === "string" && model.id.endsWith(":free") && !/(safety|guard|code|coder|lyria|embed|vl|omni|vision|audio)/i.test(model.id)
+          && (!model.architecture?.output_modalities || model.architecture.output_modalities.includes("text")))
+        .sort((a, b) => (b.created ?? 0) - (a.created ?? 0)).map((model) => model.id!);
+      freeModels = { at: Date.now(), ids };
+      return ids;
+    } catch { return []; }
   }
 
   /** One provider call for one model. Each attempt has its own ledger key so every paid attempt is counted. */

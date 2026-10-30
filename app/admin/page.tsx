@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./admin.module.css";
 
 type RangeKey = "today" | "7d" | "30d";
-type View = "overview" | "check" | "cards" | "health";
+type View = "overview" | "check" | "cards" | "health" | "try";
 type QueueKind = "reviews" | "listings" | "businesses" | "scams";
 
 interface Metrics {
@@ -125,6 +125,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
     { key: "check", label: "To check", badge: waiting },
     { key: "cards", label: "Review cards" },
     { key: "health", label: "System health" },
+    { key: "try", label: "Try Wisdom" },
   ];
 
   return (
@@ -146,6 +147,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
         {view === "check" ? <ToCheck api={api} onChanged={loadMetrics} counts={metrics?.toCheck ?? null} /> : null}
         {view === "cards" ? <Cards api={api} /> : null}
         {view === "health" ? <HealthView api={api} range={range} /> : null}
+        {view === "try" ? <TryWisdom api={api} /> : null}
       </main>
     </div>
   );
@@ -237,6 +239,60 @@ function BenitaPanel({ benita }: { benita: NonNullable<Metrics["benita"]> }) {
       <p className={styles.muted}>Latest collection runs</p>
       {benita.lastJobs.slice(0, 6).map((job) => <Line key={`${job.source}-${job.at}`} label={`${job.source} · ${job.status}${job.error ? ` (${job.error})` : ""}`} value={job.accepted} />)}
     </section>
+  );
+}
+
+type ChatLine = { from: "you" | "wisdom"; text: string; buttons?: string[]; ms?: number };
+
+/** Talk to Wisdom in the browser: the same pipeline and data as WhatsApp, on a private test number. */
+function TryWisdom({ api }: { api: Api }) {
+  const [phone, setPhone] = useState(() => `+2637000${String(Math.floor(10000 + Math.random() * 89999))}`);
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [lines]);
+
+  async function send(message: string) {
+    const said = message.trim();
+    if (!said || busy) return;
+    setBusy(true); setError(null); setText("");
+    setLines((current) => [...current, { from: "you", text: said }]);
+    try {
+      const reply = await api<{ reply: string; buttons: string[]; list: string[]; ms: number }>("/api/admin/simulate", { method: "POST", body: JSON.stringify({ phoneNumber: phone, text: said }) });
+      setLines((current) => [...current, { from: "wisdom", text: reply.reply, buttons: [...(reply.buttons ?? []), ...(reply.list ?? [])], ms: reply.ms }]);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Wisdom could not answer just now.");
+    } finally { setBusy(false); }
+  }
+
+  const examples = ["Hi", "Hotel in Masvingo", "$1200 house in Borrowdale", "I want to start a business in Harare, what would you advise?", "fuel price today", "7", "Honda Fit for sale"];
+  return (
+    <>
+      <div className={styles.head}><div><h1>Try Wisdom</h1><p className={styles.muted}>The same answers people get on WhatsApp, from live TrustHub and Benita data. You are chatting as {phone}.</p></div>
+        <button type="button" className={styles.secondary} onClick={() => { setPhone(`+2637000${String(Math.floor(10000 + Math.random() * 89999))}`); setLines([]); }}>New person</button></div>
+      <section className={styles.panel}>
+        <div className={styles.chat} aria-live="polite">
+          {lines.length === 0 ? <p className={styles.muted}>Say hello, or tap an example below.</p> : null}
+          {lines.map((line, index) => (
+            <div key={index} className={line.from === "you" ? styles.bubbleYou : styles.bubbleWisdom}>
+              <div className={styles.bubbleText}>{line.text}</div>
+              {line.buttons?.length ? <div className={styles.tags}>{line.buttons.map((button) => <button type="button" key={button} className={styles.tag} onClick={() => void send(button)} disabled={busy}>{button}</button>)}</div> : null}
+              {line.ms ? <small className={styles.muted}>{(line.ms / 1000).toFixed(1)} s</small> : null}
+            </div>
+          ))}
+          {busy ? <div className={styles.bubbleWisdom}><div className={styles.bubbleText}>…</div></div> : null}
+          <div ref={endRef} />
+        </div>
+        {error ? <p className={styles.error} role="alert">{error}</p> : null}
+        <form className={styles.chatForm} onSubmit={(event) => { event.preventDefault(); void send(text); }}>
+          <input className={styles.chatInput} value={text} onChange={(event) => setText(event.target.value)} placeholder="Type a message" aria-label="Message" maxLength={1000} />
+          <button type="submit" className={styles.primarySmall} disabled={busy || !text.trim()}>Send</button>
+        </form>
+        <div className={styles.tags}>{examples.map((example) => <button type="button" key={example} className={styles.tag} onClick={() => void send(example)} disabled={busy}>{example}</button>)}</div>
+      </section>
+    </>
   );
 }
 

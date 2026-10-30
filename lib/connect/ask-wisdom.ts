@@ -18,6 +18,7 @@ function systemPrompt(assistantName: string): string {
     "When you mention a result from benitaResults, say its trust label in plain words (for example: found online, not checked by TrustHub). Quote publicFacts with their date.",
     "When you use a headline from news, name its source (for example: says NewsDay) and give its link once; never add details the headline and summary do not contain.",
     "townSignals are typical asking prices from TrustHub listings (rents, cars) and money facts with their previous value; say they are asking prices, not guarantees.",
+    "For advice questions (starting a business, what sells, what is in demand, where to live), reason like a sharp local consultant: use searchedButNotFound (unmet demand), mostSearched, typicalPrices, townSignals rents and car prices, news and matching listings; give two or three concrete suggestions for that town with the numbers that support them, plus one honest risk.",
     "Talk like a friendly, well-informed neighbour having a good conversation: start with the answer, add one useful insight, and end with a short question or tip that keeps the chat going.",
     "If the data is too thin to answer, say so with a light touch and suggest one practical next step.",
     "Write for WhatsApp: plain sentences, at most 120 words, no markdown headings, no tables.",
@@ -29,9 +30,9 @@ export function createDeepQuestionAnswerer(gateway: Pick<AiGateway, "complete">,
   return async (question, city, key, assistantName = "Wisdom") => {
     const words = keywords(question);
     const [pulse, listings, businesses, benita, facts, news, signals] = await Promise.all([
-      city ? store.areaPulse(city, 30) : Promise.resolve(null),
-      store.searchListings({ intents: ["offering", "seeking", "recruiting", "job_seeking"], words, city, limit: 8 }),
-      words[0] ? store.searchDirectory(words[0], city, 8) : Promise.resolve([]),
+      city ? store.areaPulse(city, 30).catch(() => null) : Promise.resolve(null),
+      store.searchListings({ intents: ["offering", "seeking", "recruiting", "job_seeking"], words, city, limit: 8 }).catch(() => []),
+      words[0] ? store.searchDirectory(words[0], city, 8).catch(() => []) : Promise.resolve([]),
       store.benitaSearch({ text: question, city, limit: 8 }).catch(() => []),
       store.currentFacts().catch(() => []),
       store.news ? store.news({ text: question, town: city, limit: 5 }).catch(() => []) : Promise.resolve([]),

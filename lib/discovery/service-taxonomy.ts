@@ -113,7 +113,6 @@ export const SERVICE_CONCEPTS: ServiceConcept[] = [
 
 /** A bare word like "school" can mean materially different things; these are asked about rather than guessed. */
 const AMBIGUOUS_TERMS: Record<string, string[]> = {
-  school: ["school", "driving_school"],
   lessons: ["driving_school", "tutor"],
   lesson: ["driving_school", "tutor"],
   repair: ["mechanic", "appliance_repair", "phone_repair", "computer_repair"],

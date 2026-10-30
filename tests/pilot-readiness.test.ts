@@ -29,7 +29,7 @@ async function say(c: ConversationCoordinator, id: string, text: string, n: numb
   return c.handleTurn({ conversationId: id, channel: "whatsapp", text, request: understanding.request ?? undefined, understanding, providerMessageId: `${id}-${n}` });
 }
 
-const enabled = (overrides: Record<string, string> = {}): AiConfigStatus => readAiConfig({ OPENROUTER_API_KEY: "test-key-not-real", OPENROUTER_MODEL: "test-model", OPENROUTER_INPUT_USD_PER_MILLION_TOKENS: "1", OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS: "2", ...overrides });
+const enabled = (overrides: Record<string, string> = {}): AiConfigStatus => readAiConfig({ OPENROUTER_API_KEY: "test-key-not-real", OPENROUTER_MODEL: "test-model", OPENROUTER_INPUT_USD_PER_MILLION_TOKENS: "1", OPENROUTER_OUTPUT_USD_PER_MILLION_TOKENS: "2", AI_MAX_OUTPUT_TOKENS: "300", ...overrides });
 function fakeFetch(content: string, usage: unknown = { prompt_tokens: 100, completion_tokens: 50 }, status = 200) {
   const requests: { url: string; body: Record<string, unknown> }[] = [];
   const impl = (async (url: string, init: { body: string }) => {

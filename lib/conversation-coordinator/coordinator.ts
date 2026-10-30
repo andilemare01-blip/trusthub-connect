@@ -661,7 +661,8 @@ export class ConversationCoordinator {
   private async finishConnect(conversation: RuntimeConversation, turn: IncomingTurn, result: ConnectReply, priorState: RuntimeState, at: string): Promise<TurnResult> {
     const introduced = withHandover(conversation, result.reply);
     if (introduced !== result.reply) {
-      const sameBody = result.interactive?.body === result.reply || result.interactive?.body === result.reply.slice(0, result.interactive?.body.length ?? 0);
+      const body = result.interactive?.body ?? "";
+      const sameBody = !!body && (body === result.reply || result.reply.startsWith(body));
       result = { ...result, reply: introduced, ...(result.interactive && sameBody ? { interactive: { ...result.interactive, body: introduced.length > 1024 ? "What would you like to do next?" : introduced } } : {}) };
     }
     // "Hi" or MENU in the middle of a search question shows the menu but keeps the

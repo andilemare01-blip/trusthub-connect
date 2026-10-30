@@ -17,7 +17,7 @@ export const DATASETS: Record<string, string> = {
   financial_services: `${BASE}/financial_services/hotosm_zwe_financial_services_osm_geojson.zip`,
 };
 const KIND_KEY = /^(shop|amenity|tourism|office|craft|healthcare|leisure|industrial)$/;
-const OSM_TYPE: Record<string, string> = { nodes: "node", node: "node", ways_poly: "way", ways_line: "way", way: "way", relations: "relation", relation: "relation" };
+const OSM_TYPE: Record<string, string> = { n: "node", w: "way", r: "relation", nodes: "node", node: "node", ways_poly: "way", ways_line: "way", way: "way", relations: "relation", relation: "relation" };
 
 async function allPlaces(): Promise<Place[]> {
   const rows = await rest<{ name: string; kind: string; lat: number; lon: number }[]>("benita_places?select=name,kind,lat,lon&limit=20000").catch(() => []);
@@ -64,14 +64,22 @@ export async function runHdx(dataset: string): Promise<{ seen: number; accepted:
   for (const feature of collection.features) {
     const p = feature.properties ?? {};
     const t: Record<string, string> = {};
-    for (const [key, value] of Object.entries(p)) if (value !== null && value !== undefined && value !== "") t[key] = String(value);
-    const name = clean(t.name ?? t["name:en"], 200);
+    // HOT exports write OSM keys with underscores ("addr_city", "name_en"); put the colons back.
+    for (const [key, value] of Object.entries(p)) {
+      if (value === null || value === undefined || value === "") continue;
+      t[/^(addr|contact|name|healthcare|disused)_/.test(key) ? key.replace("_", ":") : key] = String(value);
+    }
+    // The id is "node/9935458223"; older exports use osm_type + osm_id.
+    const [rawType, rawId] = t.id?.includes("/") ? t.id.split("/") : [t.osm_type ?? "", t.osm_id ?? ""];
+    const osmType = OSM_TYPE[rawType];
+    t.osm_id = rawId;
+    const name = clean(t.name ?? t["name:en"] ?? t.name_latin, 200);
     const at = centre(feature.geometry);
-    const osmType = OSM_TYPE[String(t.osm_type ?? "")];
-    if (!name || !at || !osmType || !t.osm_id || !Object.keys(t).some((key) => KIND_KEY.test(key)) || t.disused) { rejected++; continue; }
+    if (!name || !at || !osmType || !rawId || !Object.keys(t).some((key) => KIND_KEY.test(key)) || t["disused:amenity"]) { rejected++; continue; }
     const [lat, lon] = at;
     const where = locate(lat, lon, places);
-    const city = clean(t["addr:city"], 80) ?? where.city;
+    for (const key of ["adm0_pcode", "adm0_name", "adm1_pcode", "adm2_pcode", "adm3_pcode", "adm3_name", "adm4_pcode", "id"]) delete t[key];
+    const city = clean(t["addr:city"], 80) ?? where.city ?? clean(t.adm2_name, 80);
     const area = clean(t["addr:suburb"], 80) ?? where.area;
     const { recordType, category, sub } = classify(t);
     const phone = zwPhone(t.phone ?? t["contact:phone"] ?? t["contact:mobile"]);

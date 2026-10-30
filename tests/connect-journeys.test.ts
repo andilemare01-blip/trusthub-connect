@@ -217,9 +217,9 @@ test("the area pulse uses real searches and says so honestly when there are none
   }
   await say("menu.area");
   const pulse = await say("town:Harare");
-  assert.match(pulse.reply, /\*Harare this week\*/);
-  assert.match(pulse.reply, /1\. solar installer · 2 searches/);
-  assert.match(pulse.reply, /Asked for, but not found/);
+  assert.match(pulse.reply, /\*Harare: what's happening\*/);
+  assert.match(pulse.reply, /People here are looking for\*\nsolar installer · plumber/);
+  assert.match(pulse.reply, /Wanted, but nobody listed\*: solar installer/);
   const unrelated = await say("plumber in Harare");
   assert.notEqual(unrelated.conversation.connect?.flow, "area", "a new request after the pulse leaves the pulse");
 });

@@ -115,3 +115,15 @@ The nightly `benita-gaps` job looks up again everything that found nothing the d
 - `health_facilities`, `education_facilities` and `financial_services`.
 
 Records use the same ids as the Overpass connector (`node:123`), so the two sources merge instead of duplicating. `benita-hdx` refreshes all four every Sunday. This is far faster than the cell-by-cell Overpass tasks, which now run every 10 minutes to stay gentle on the public servers.
+
+## Community intelligence
+
+- **News.** `{ action: "news" }` runs hourly (cron `benita-news`). It reads RSS feeds from ZimPriceCheck, NewsDay, The Zimbabwe Independent, Pindula News, 263Chat, NewsHawks, Techzim and Zimbabwe Situation, and keeps only headlines about prices, money, fuel, power and water, jobs, housing, transport, scams, business and councils. Each item is tagged with its topics and the towns it names. Only the headline, a short summary and the link are stored, in `benita_news`.
+- **Signals.** `benita_signals(city)` returns:
+  - fuel and ZiG facts, with the previous value;
+  - median asking rents by suburb;
+  - median asking prices by car model;
+  - how many jobs are listed.
+- **The brief.** Menu option 7 shows money, news, rents, cars, jobs and what people search for.
+- **Chat.** Any question about prices, money or the town gets a free answer. The AI writes it from the news, signals and facts when AI is available; otherwise the matching signals and headlines are shown directly.
+- **Listing search.** `benita_listings(...)` searches every live listing in the database by area, budget, rent or buy, and words, and can exclude office space from home searches. When nothing fits the budget, it returns the closest options above it, flagged with `within_budget = false`.

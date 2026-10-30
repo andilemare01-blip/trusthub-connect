@@ -91,6 +91,8 @@ export interface Listing {
   createdAt: string;
   /** Set when Benita collected the listing from a public website rather than a WhatsApp post. */
   sourceUrl?: string | null;
+  /** False when nothing fitted the budget and this is one of the closest above it. */
+  withinBudget?: boolean;
 }
 
 export interface ListingQuery {
@@ -104,6 +106,8 @@ export interface ListingQuery {
   maxPrice?: number | null;
   /** "rent" or "buy" when the request makes it clear; "$1,200 in Borrowdale" is a rent budget, not a house price. */
   deal?: "rent" | "buy" | null;
+  /** Titles matching this (case-insensitive regular expression) are left out, e.g. office space in a home search. */
+  exclude?: string | null;
   limit: number;
 }
 
@@ -121,22 +125,26 @@ const RENT_WORDS = /\b(rent|rental|to let|lease|per month|p\/m|monthly)\b/i;
 const SALE_WORDS = /\b(for sale|sale|selling|buy)\b/i;
 
 /** Applies area, budget and rent-or-buy to listings already narrowed by the database, closest to the budget first. */
-export function refineListings<T extends { title: string; area: string | null; priceText: string | null; status?: string; description?: string | null }>(items: (T & { price: number | null })[], query: ListingQuery): T[] {
+export function refineListings<T extends { title: string; area: string | null; priceText: string | null; status?: string; description?: string | null }>(items: (T & { price: number | null })[], query: ListingQuery): (T & { withinBudget: boolean })[] {
   const area = query.area?.toLocaleLowerCase();
+  const exclude = query.exclude ? new RegExp(query.exclude.replace(/\\m|\\M/g, "\\b"), "i") : null;
   const kept = items.filter((item) => {
     const text = `${item.title} ${item.area ?? ""} ${item.description ?? ""}`;
     if (area && !text.toLocaleLowerCase().includes(area)) return false;
+    if (exclude?.test(item.title)) return false;
     if (query.deal === "rent" && (SALE_WORDS.test(item.title) && !RENT_WORDS.test(item.title))) return false;
     if (query.deal === "buy" && RENT_WORDS.test(item.title) && !SALE_WORDS.test(item.title)) return false;
-    if (query.maxPrice && item.price !== null && item.price > query.maxPrice * 1.15) return false;
+    if (query.maxPrice && item.price !== null && item.price > query.maxPrice * 2) return false;
     if (query.deal === "rent" && query.maxPrice && item.price !== null && item.price < query.maxPrice * 0.2) return false;
     return true;
-  });
+  }).map((item) => ({ ...item, withinBudget: !query.maxPrice || item.price === null || item.price <= query.maxPrice * 1.15 }));
+  // Within budget first; when nothing fits, the closest above it (flagged) rather than nothing at all.
+  const pool = kept.some((item) => item.withinBudget) ? kept.filter((item) => item.withinBudget) : kept;
   const distance = (item: { price: number | null }) => query.maxPrice && item.price !== null ? Math.abs(query.maxPrice - item.price) : Number.MAX_SAFE_INTEGER;
   // "Honda Fit" should rank a Honda Fit above a "fitted kitchen": more of the person's words first.
   const words = query.words.map((word) => word.toLocaleLowerCase()).filter((word) => word.length >= 2);
   const hits = (item: T) => words.filter((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(`${item.title} ${item.description ?? ""}`)).length;
-  return kept.sort((a, b) => hits(b) - hits(a) || Number(b.status === "approved") - Number(a.status === "approved") || distance(a) - distance(b)).slice(0, query.limit);
+  return pool.sort((a, b) => hits(b) - hits(a) || Number(b.status === "approved") - Number(a.status === "approved") || distance(a) - distance(b)).slice(0, query.limit);
 }
 
 export interface NewBusinessSubmission {
@@ -176,6 +184,17 @@ export interface AreaPulse {
   typicalPrices: { label: string; median: number; currency: string; samples: number }[];
 }
 
+/** A headline Benita collected for Community intelligence. */
+export interface NewsItem { title: string; summary: string | null; url: string; source: string; publishedAt: string | null; topics: string[] }
+
+/** Signals from Benita's own data for a town. */
+export interface TownSignals {
+  facts: { key: string; label: string; value: number | null; previous: number | null; unit: string | null; currency: string | null; asOf: string }[];
+  rents: { area: string; median: number; listings: number }[];
+  cars: { model: string; median: number; listings: number }[];
+  jobsTotal: number;
+}
+
 export interface IdentityActivity {
   reviews: number;
   listings: number;
@@ -201,6 +220,10 @@ export interface ConnectStore {
   countSearches(city: string, category: string, days: number): Promise<number>;
   lastCity(identityId: string): Promise<string | null>;
   areaPulse(city: string, days: number): Promise<AreaPulse>;
+  /** Community intelligence: recent headlines about prices, money, jobs and services, optionally for a town or a question. */
+  news?(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }): Promise<NewsItem[]>;
+  /** Community intelligence: money facts with their change, typical rents, car prices and jobs for a town. */
+  signals?(city: string): Promise<TownSignals | null>;
   scamSummary(phone: string, days: number): Promise<ScamSummary>;
   saveScamReport(report: { phone: string; reason: string; identityId: string; sourceMessageId: string }): Promise<"saved" | "already_reported">;
   saveFeedback(feedback: { message: string; identityId: string }): Promise<void>;
@@ -343,6 +366,14 @@ export class InMemoryConnectStore implements ConnectStore {
     }).slice(0, query.limit ?? 5);
   }
   async currentFacts(prefix: string | null = null) { return this.facts.filter((fact) => !prefix || fact.key.startsWith(prefix)); }
+  newsItems: NewsItem[] = [];
+  townSignals: TownSignals | null = null;
+  async news(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }) {
+    const words = (query.text ?? "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length >= 4);
+    return this.newsItems.filter((item) => (!query.topics?.length || item.topics.some((topic) => query.topics!.includes(topic)))
+      && (!words.length || words.some((word) => `${item.title} ${item.summary ?? ""}`.toLocaleLowerCase().includes(word)))).slice(0, query.limit ?? 5);
+  }
+  async signals() { return this.townSignals; }
   /** What a live lookup would find; tests fill it to stand in for the map and the web. */
   liveFinds: BenitaResult[] = [];
   liveRequests: { text: string; city: string; terms: string[] }[] = [];

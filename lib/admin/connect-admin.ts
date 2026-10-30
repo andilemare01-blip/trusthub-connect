@@ -59,11 +59,33 @@ export async function adminPasswordLogin(email: string, password: string): Promi
 }
 
 /** Sends TrustHub's normal password-reset email. Always reports success so the form never reveals which emails exist. */
-export async function adminPasswordReset(email: string): Promise<void> {
+export async function adminPasswordReset(email: string, redirectTo?: string): Promise<void> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return;
-  await fetch(`${url.replace(/\/+$/, "")}/auth/v1/recover`, { method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify({ email }), cache: "no-store" }).catch(() => undefined);
+  // The link in the email comes back to the admin app's own reset page, not the project's default site address.
+  const query = redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : "";
+  await fetch(`${url.replace(/\/+$/, "")}/auth/v1/recover${query}`, { method: "POST", headers: { apikey: key, "Content-Type": "application/json" }, body: JSON.stringify({ email }), cache: "no-store" }).catch(() => undefined);
+}
+
+/** Sets a new password using the one-time access token from a reset email's link. */
+export async function adminSetPassword(accessToken: string, password: string): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return { ok: false, status: 503, error: "Password reset is unavailable right now." };
+  let response: Response;
+  try {
+    response = await fetch(`${url.replace(/\/+$/, "")}/auth/v1/user`, {
+      method: "PUT", headers: { apikey: key, Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ password }), cache: "no-store",
+    });
+  } catch {
+    return { ok: false, status: 503, error: "Password reset is temporarily unavailable." };
+  }
+  if (response.ok) return { ok: true };
+  if (response.status === 401 || response.status === 403) return { ok: false, status: 401, error: "This reset link has expired or was already used. Ask for a new one from the sign-in page." };
+  const body = await response.json().catch(() => null) as { msg?: unknown; message?: unknown } | null;
+  const reason = typeof body?.msg === "string" ? body.msg : typeof body?.message === "string" ? body.message : "";
+  return { ok: false, status: 400, error: reason ? `Couldn't set that password: ${reason}` : "Couldn't set that password. Try a longer one." };
 }
 
 const LABEL: Record<string, string> = { find: "Find a business", review: "Rate or review", buy_sell: "Buy or sell", jobs: "Jobs", houses: "Houses & rentals" };

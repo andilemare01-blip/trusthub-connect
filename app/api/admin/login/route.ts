@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase().slice(0, 254) : "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ error: "Enter your email address." }, { status: 400, headers: noStore });
   if (body?.reset === true) {
-    await adminPasswordReset(email);
+    await adminPasswordReset(email, `${request.nextUrl.origin}/admin/reset`);
     return NextResponse.json({ ok: true, message: "If that email has a TrustHub account, a reset link is on its way." }, { headers: noStore });
   }
   const password = typeof body?.password === "string" ? body.password.slice(0, 200) : "";

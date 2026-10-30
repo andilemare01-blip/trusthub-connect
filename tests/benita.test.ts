@@ -9,6 +9,10 @@ import { ConnectJourneys } from "../lib/connect/journeys.ts";
 import { InMemoryConnectStore } from "../lib/connect/store.ts";
 import { SupabaseConnectStore, type ConnectDbClient } from "../lib/connect/supabase-store.ts";
 
+import { correctTown } from "../lib/connect/parse.ts";
+import { evidenceMatchesRequest } from "../lib/conversation-coordinator/coordinator.ts";
+import type { EvidenceItem, NormalizedRequest } from "../lib/answer-resolution/types.ts";
+
 const NOW = "2026-10-29T10:00:00.000Z";
 
 function result(overrides: Partial<BenitaResult> = {}): BenitaResult {
@@ -182,4 +186,85 @@ test("a message nothing else understands is answered by a confident Benita match
   weak.benitaResults.push(result({ id: "w1", name: "Gweru Solar Centre", city: "Gweru", score: 0.6 }), result({ id: "w2", name: "Solar Two", city: "Gweru", score: 0.7 }));
   const unsure = await conversation(weak)("solar panels wholesale gweru");
   assert.doesNotMatch(unsure.reply, /Gweru Solar Centre/, "low-confidence matches are not presented as answers");
+});
+
+// ------------------------------------------------------------- Benita on every search
+
+
+test("misspelt and everyday town names are read as the town that was meant", () => {
+  assert.equal(correctTown("beightbridge"), "Beitbridge");
+  assert.equal(correctTown("masvigo"), "Masvingo");
+  assert.equal(correctTown("Vic Falls"), "Victoria Falls");
+  assert.equal(correctTown("bulawyo"), "Bulawayo");
+  assert.equal(correctTown("Avondale"), null, "a suburb is never turned into a town");
+  assert.equal(correctTown("Johannesburg"), null);
+});
+
+test("a directory result only counts when it is the kind of thing asked for", () => {
+  const hotel = { category: "hotel", questionType: "business_discovery", location: { city: "Masvingo" } } as unknown as NormalizedRequest;
+  const item = (name: string, category: string | null) => ({ id: name, name, category, kind: "listing" }) as unknown as EvidenceItem;
+  assert.equal(evidenceMatchesRequest(item("Chicken inn", "Others - Food restaurant"), hotel), false);
+  assert.equal(evidenceMatchesRequest(item("Flamboyant", "Hotels & Lodges"), hotel), true);
+  assert.equal(evidenceMatchesRequest(item("Great Zimbabwe Hotel", null), hotel), true);
+});
+
+/** A directory that, like production, returns a weak match whatever was asked. */
+class WeakDirectory implements SupabaseReadClient {
+  private readonly town: string;
+  private readonly businesses: Row[];
+  constructor(town: string, businesses: Row[]) { this.town = town; this.businesses = businesses; }
+  from(table: "businesses" | "communities") {
+    const rows: Row[] = table === "communities"
+      ? [{ id: "c9", name: this.town, city: this.town, country: "Zimbabwe", description: null, latitude: null, longitude: null, created_at: NOW }]
+      : this.businesses;
+    const query = { select: () => query, eq: () => query, ilike: () => query, or: () => query, limit: () => query, then: (ok: (v: SupabaseReadResponse) => unknown, bad?: (r: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(ok, bad) };
+    return query as unknown as SupabaseReadQuery;
+  }
+}
+const business = (id: string, name: string, category: string, city: string): Row => ({ id, name, category, subcategory: null, province: null, country: "Zimbabwe", city, area: null, address: null, phone: "+263 77 000 0000", website: null, latitude: null, longitude: null, source: "import", source_id: id, trust_score: 5, reviews_count: 3, opening_hours: null, description: null, created_at: NOW });
+
+function chatWith(directory: SupabaseReadClient, store: InMemoryConnectStore) {
+  const runtime = createConversationRuntime({ trustHubClient: new SupabaseTrustHubClient(directory), now: () => NOW, connect: { store, journeys: new ConnectJourneys(store, undefined, () => new Date(NOW)) } });
+  let n = 0;
+  return async (text: string) => {
+    const understanding = await new DeterministicUnderstandingProvider().understand(text);
+    return runtime.handleTurn({ conversationId: "conv2", channel: "whatsapp", text, request: understanding.request ?? undefined, understanding, providerMessageId: `wamid.c.${n++}`, identityId: "102" });
+  };
+}
+
+test("Hotel in Masvingo: an off-topic directory match no longer hides Benita's hotels", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.benitaResults.push(
+    result({ id: "h1", name: "Regency Hotel Flamboyant", category: "Accommodation", subcategory: "hotel", city: "Masvingo", area: null, tier: "listed", tierLabel: "Listed, not verified" }),
+    result({ id: "h2", name: "Mineheart Boutique Hotel", category: "Accommodation", subcategory: "hotel", city: "Masvingo", area: null, tier: "listed", tierLabel: "Listed, not verified" }),
+  );
+  const say = chatWith(new WeakDirectory("Masvingo", [business("b1", "Chicken inn", "Others - Food restaurant", "Masvingo")]), store);
+  const answered = await say("Hotel in Masvingo");
+  assert.match(answered.reply, /Regency Hotel Flamboyant/);
+  assert.match(answered.reply, /Mineheart Boutique Hotel/);
+  assert.doesNotMatch(answered.reply, /Chicken inn/i);
+  assert.match(answered.reply, /Listed, not verified/);
+  assert.match(answered.reply, /Tap \*Add a business\*/);
+});
+
+test("when TrustHub has a real match, Benita adds more underneath instead of replacing it", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.benitaResults.push(result({ id: "h3", name: "Hotel Victoria", category: "Accommodation", subcategory: "hotel", city: "Masvingo", area: null }));
+  const say = chatWith(new WeakDirectory("Masvingo", [business("b2", "Great Zimbabwe Hotel", "Hotels & Lodges", "Masvingo")]), store);
+  const answered = await say("Hotel in Masvingo");
+  assert.match(answered.reply, /Great Zimbabwe Hotel/);
+  assert.match(answered.reply, /More hotel in Masvingo that Benita found:\*\n1\. \*Hotel Victoria\*/);
+  assert.ok(answered.reply.indexOf("Great Zimbabwe Hotel") < answered.reply.indexOf("Hotel Victoria"), "TrustHub's own result comes first");
+});
+
+test("Hotel in beightbridge: the town is understood, and with nothing stored Benita looks it up live", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.liveFinds.push(result({ id: "live1", name: "Rainbow Beitbridge Hotel", category: "Accommodation", subcategory: "hotel", city: "Beitbridge", area: null }));
+  const say = chatWith(new WeakDirectory("Beitbridge", []), store);
+  const answered = await say("Hotel in beightbridge");
+  assert.equal(store.liveRequests[0]?.city, "Beitbridge");
+  assert.ok(store.liveRequests[0]?.terms.includes("lodge"), "the live lookup knows a lodge is a kind of hotel");
+  assert.match(answered.reply, /Rainbow Beitbridge Hotel/);
+  assert.match(answered.reply, /Found online, check before paying/);
+  assert.doesNotMatch(answered.reply, /couldn't find/);
 });

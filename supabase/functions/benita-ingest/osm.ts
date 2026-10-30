@@ -7,10 +7,10 @@ import { rest, source, upsert } from "./db.ts";
 import { clean, searchText, zwPhone } from "./normalise.ts";
 
 /** overpass-api.de refuses agents named like generic crawlers (HTTP 406), so Overpass gets a descriptive agent with a contact link. */
-const OVERPASS_AGENT = "TrustHubConnect-Benita/1.0 (+https://github.com/andilemare01-blip/trusthub-connect)";
+export const OVERPASS_AGENT = "TrustHubConnect-Benita/1.0 (+https://github.com/andilemare01-blip/trusthub-connect)";
 
 // From Supabase, overpass-api.de and its mirrors answer GET; POST is refused with 406 and other public servers time out.
-const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://lz4.overpass-api.de/api/interpreter", "https://z.overpass-api.de/api/interpreter"];
+export const ENDPOINTS = ["https://overpass-api.de/api/interpreter", "https://lz4.overpass-api.de/api/interpreter", "https://z.overpass-api.de/api/interpreter"];
 
 /**
  * Zimbabwe as 1-degree cells named by their south-west corner ("-18,31" holds Harare).
@@ -53,7 +53,7 @@ async function overpass(query: string, budgetMs: number, perServerMs: number): P
 }
 
 /** Towns and cities used to name a place's town when the live place lookup is slow. Coordinates are approximate centres. */
-const TOWNS: Place[] = ([
+export const TOWNS: Place[] = ([
   ["Harare", -17.829, 31.052, "city"], ["Chitungwiza", -18.012, 31.076, "city"], ["Epworth", -17.89, 31.147, "town"], ["Ruwa", -17.89, 31.245, "town"], ["Norton", -17.883, 30.7, "town"],
   ["Bulawayo", -20.15, 28.583, "city"], ["Mutare", -18.971, 32.671, "city"], ["Gweru", -19.45, 29.817, "city"], ["Kwekwe", -18.928, 29.815, "city"], ["Kadoma", -18.333, 29.917, "city"],
   ["Masvingo", -20.064, 30.828, "city"], ["Chinhoyi", -17.367, 30.2, "town"], ["Marondera", -18.185, 31.552, "town"], ["Bindura", -17.302, 31.331, "town"], ["Victoria Falls", -17.932, 25.831, "city"],
@@ -105,7 +105,7 @@ const FOOD = new Set(["restaurant", "cafe", "fast_food", "bar", "pub", "food_cou
 const HEALTH = new Set(["pharmacy", "clinic", "hospital", "doctors", "dentist"]);
 const SCHOOL = new Set(["school", "college", "university", "kindergarten", "childcare", "language_school", "training", "driving_school"]);
 
-function classify(t: Record<string, string>): { recordType: string; category: string; sub: string | null } {
+export function classify(t: Record<string, string>): { recordType: string; category: string; sub: string | null } {
   const sub = t.shop ?? t.craft ?? t.office ?? t.healthcare ?? t.amenity ?? t.tourism ?? t.leisure ?? t.industrial ?? t.man_made ?? null;
   if (t.healthcare || HEALTH.has(t.amenity)) return { recordType: "healthcare", category: "Healthcare", sub };
   if (SCHOOL.has(t.amenity)) return { recordType: "school", category: "Education", sub };

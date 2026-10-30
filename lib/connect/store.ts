@@ -174,6 +174,8 @@ export interface ConnectStore {
   benitaSearch(query: BenitaQuery): Promise<BenitaResult[]>;
   /** Benita: the latest public facts (fuel ceilings, exchange rates), optionally by key prefix. */
   currentFacts(prefix?: string | null): Promise<BenitaFact[]>;
+  /** Benita: look something up live (open map, then the web), save what is found, and return how many were saved. */
+  benitaLive?(request: { text: string; city: string; terms: string[] }): Promise<number>;
 }
 
 function median(values: number[]): number {
@@ -300,6 +302,15 @@ export class InMemoryConnectStore implements ConnectStore {
     }).slice(0, query.limit ?? 5);
   }
   async currentFacts(prefix: string | null = null) { return this.facts.filter((fact) => !prefix || fact.key.startsWith(prefix)); }
+  /** What a live lookup would find; tests fill it to stand in for the map and the web. */
+  liveFinds: BenitaResult[] = [];
+  liveRequests: { text: string; city: string; terms: string[] }[] = [];
+  async benitaLive(request: { text: string; city: string; terms: string[] }) {
+    this.liveRequests.push(request);
+    const found = this.liveFinds.splice(0);
+    this.benitaResults.push(...found);
+    return found.length;
+  }
   async activity(identityId: string) {
     return {
       reviews: this.reviews.filter((review) => review.identityId === identityId).length,

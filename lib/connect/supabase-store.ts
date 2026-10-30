@@ -88,6 +88,9 @@ const live = (row: Row) => typeof row.expires_at !== "string" || Date.parse(row.
 
 const PRICE_LABELS: Record<string, string> = { property: "Rent", phones: "Phones", electronics: "Electronics", vehicles: "Vehicles", furniture: "Furniture", jobs: "Wages offered", food: "Food", clothing: "Clothing" };
 
+/** Benita's shared secret, read once per server instance. */
+let benitaSecret: string | null = null;
+
 export class SupabaseConnectStore implements ConnectStore {
   private readonly db: ConnectDbClient;
 
@@ -307,6 +310,32 @@ export class SupabaseConnectStore implements ConnectStore {
     const rpc = this.db.rpc;
     if (!rpc) return [];
     return await benitaFacts({ rpc: (fn, args) => rpc.call(this.db, fn, args) }, prefix);
+  }
+
+  /**
+   * Asks Benita's collector to look something up live and save it. It authenticates with the shared secret
+   * in benita_settings and never waits longer than the live lookup's own time budget.
+   */
+  async benitaLive(request: { text: string; city: string; terms: string[] }): Promise<number> {
+    const base = (process.env.SUPABASE_URL ?? "").replace(/\/+$/, "");
+    if (!base.startsWith("https://")) return 0;
+    if (!benitaSecret) {
+      const found = rows(await this.db.from("benita_settings").select("value").eq("key", "cron_secret").limit(1), "Read Benita settings");
+      benitaSecret = typeof found[0]?.value === "string" ? found[0].value : null;
+    }
+    if (!benitaSecret) return 0;
+    try {
+      const response = await fetch(`${base}/functions/v1/benita-ingest`, {
+        method: "POST", headers: { "content-type": "application/json", "x-benita-secret": benitaSecret },
+        body: JSON.stringify({ action: "live", text: request.text, city: request.city, terms: request.terms }), signal: AbortSignal.timeout(14_000),
+      });
+      if (!response.ok) return 0;
+      const body = await response.json() as { saved?: unknown };
+      return Number(body.saved ?? 0) || 0;
+    } catch (error) {
+      console.error(JSON.stringify({ event: "benita.live_failed", errorType: error instanceof Error ? error.name : "unknown" }));
+      return 0;
+    }
   }
 
   async activity(identityId: string): Promise<IdentityActivity> {

@@ -7,6 +7,8 @@
  * POST { action: "facts" }                      fuel ceilings and the official exchange rate
  * POST { action: "sync" }                       mirror new records into businesses
  * POST { action: "tick" }                       scheduler: run whatever is due
+ * POST { action: "live", text, city, terms }    look something up now (map, then web), save it, answer in ~12 s
+ * POST { action: "gaps" }                       look up again every search that found nothing yesterday
  *
  * Long actions answer 202 at once and keep working; progress is written to
  * knowledge_ingestion_jobs. Callers authenticate with the x-benita-secret header.
@@ -15,6 +17,7 @@ import { finishJob, rest, rpc, startJob } from "./db.ts";
 import { KEYS, runOsm, TILES } from "./osm.ts";
 import { probe, runWeb } from "./web.ts";
 import { runFacts } from "./facts.ts";
+import { gaps, live } from "./live.ts";
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 
@@ -94,6 +97,14 @@ Deno.serve(async (req) => {
         return json({ job: await background("benita_facts", {}, () => runFacts()) }, 202);
       case "sync":
         return json(await rpc("benita_sync_businesses", { p_since: body.since ?? new Date(0).toISOString() }));
+      case "live": {
+        const text = String(body.text ?? "").slice(0, 60), city = String(body.city ?? "").slice(0, 60);
+        const terms = Array.isArray(body.terms) ? body.terms.map(String).slice(0, 10) : [];
+        if (!text || !city) return json({ error: "text and city required" }, 400);
+        return json(await live(text, city, terms));
+      }
+      case "gaps":
+        return json({ job: await background("benita_gaps", {}, () => gaps().then(syncAfter)) }, 202);
       case "tick":
         return json({ job: await background("benita_tick", {}, tick) }, 202);
       default:

@@ -16,6 +16,7 @@ import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
 import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
+import { momentOf, voiceLine } from "./voice.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
@@ -197,10 +198,16 @@ export class ConnectJourneys {
       const grant = await this.store.addCredits(context.identityId, 10, "welcome", "welcome");
       returning = !grant.added;
     }
-    const firstName = context.profileName?.trim().split(/\s+/)[0];
+    const firstName = context.profileName?.trim().split(/\s+/)[0] ?? null;
+    const name = context.assistantName;
+    // Lines from the Wisdom library, a different one each time; the plain line is the fallback.
+    const hello = returning
+      ? (greeted ? voiceLine("returning", name, firstName) : null)
+      : voiceLine("new_hi", name, firstName, undefined, undefined, (line) => line.includes(name));
+    const introduce = (line: string) => line.includes(name) ? line : `${line} It's ${name} on duty today 🙂`;
     const body = returning
-      ? `${greeted ? `Welcome back${firstName ? `, ${firstName}` : ""}! ` : ""}It's ${context.assistantName}. What would you like to do?`
-      : `Hi, I'm ${context.assistantName}. I help you find trusted businesses, buy and sell, and see what's happening around you.\n\nWhat would you like to do?`;
+      ? (greeted && hello ? `${introduce(hello)}${/[?]\s*$/.test(hello) ? "" : " What would you like to do?"}` : `${greeted ? `Welcome back${firstName ? `, ${firstName}` : ""}! ` : ""}It's ${name}. What would you like to do?`)
+      : `${hello ?? `Hi, I'm ${name}.`} I help you find trusted businesses, buy and sell, and see what's happening around you.\n\nWhat would you like to do?`;
     return { reply: `${body}\n\n${menuText()}`, interactive: menuInteractive(body), state: null, action: "show_menu" };
   }
 
@@ -406,7 +413,7 @@ export class ConnectJourneys {
     for (const value of [place.area, place.city]) if (value) name = name.replace(new RegExp(`\\s*(?:,|\\bin\\b|\\bat\\b)?\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "ig"), " ");
     name = name.replace(/\s+/g, " ").replace(/[,.\s]+$/, "").trim();
     if (name.length < 2) return { reply: "What's the business called?", state: { flow: "review", step: "which", data: {} }, action: "clarify" };
-    const found = await this.store.searchDirectory(name, place.city, 5);
+    const found = await this.store.searchDirectory(name, place.city, 5, true);
     await this.store.logSearch({ identityId: context.identityId, journey: "review", category: null, city: place.city, area: place.area, queryText: clip(name, 200), resultCount: found.length, sourceMessageId: context.providerMessageId ? `${context.providerMessageId}:review` : null }).catch(() => undefined);
     if (!found.length) {
       const body = `I couldn't find *${clip(name, 60)}*${place.city ? ` in ${place.city}` : ""} on TrustHub. Want to add it, so you and others can review it?`;
@@ -761,17 +768,18 @@ export class ConnectJourneys {
   /** Light replies to thanks, goodbyes, small talk and requests for a joke. */
   private socialReply(message: string, context: ConnectContext): ConnectReply | null {
     const name = context.assistantName;
+    const firstName = context.profileName?.trim().split(/\s+/)[0] ?? null;
     const menu: [string, string][] = [["menu.find", "Find a business"], ["btn.menu", "Main menu"]];
-    if (/^(?:bye|goodbye|see you|see ya|later|ciao|cheers)\b[\s!.]*$/i.test(message)) return { reply: goodbyeLine(), state: null, action: "answer" };
-    if (/\b(?:joke|make me laugh|something funny|say something funny|be funny)\b/i.test(message)) {
-      const body = humourLine(name, message.length);
-      return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
-    }
-    if (/^(?:how are you|how's it going|how is it going|what's up|whats up|how was your day|how r u)\b[\s!?.]*$/i.test(message)) {
-      const body = smalltalkLine(name);
-      return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
-    }
-    return null;
+    const moment = momentOf(message);
+    // "Thanks" and "sorted" can answer a question in progress, so the coordinator decides those.
+    if (!moment || moment === "thanks" || moment === "solved") return null;
+    if (moment === "goodbye") return { reply: voiceLine("goodbye", name, firstName) ?? goodbyeLine(), state: null, action: "answer" };
+    const fallback = moment === "light_joke" ? humourLine(name, message.length) : moment === "smalltalk_weather" ? smalltalkLine(name) : null;
+    const line = voiceLine(moment, name, firstName);
+    if (!line && !fallback) return null;
+    const close = moment === "light_joke" || moment === "smalltalk_weather" ? `\n\nI'm ${name}, by the way. What can I find for you?` : "\n\nWhat can I find for you?";
+    const body = line ? `${line}${line.includes(name) ? "\n\nWhat can I find for you?" : close}` : fallback!;
+    return { reply: body, interactive: buttons(body, menu), state: null, action: "answer" };
   }
 
   // ------------------------------------------------------- profile & feedback

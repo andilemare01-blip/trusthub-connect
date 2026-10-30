@@ -5,7 +5,15 @@ import type { CoordinatorAction, IncomingTurn, OutcomeConfirmation, RuntimeConve
 import type { RuntimeConversationRepository } from "./repository";
 import { createAnswerGenerator } from "../answer-resolution/response-generator.ts";
 import type { AnswerGenerator } from "@/types/answer";
-import { assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, type WisdomLibrary } from "./wisdom-library.ts";
+import { ASSISTANT_NAMES, assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, type WisdomLibrary } from "./wisdom-library.ts";
+import { momentOf, voiceLine } from "../connect/voice.ts";
+
+/** A different one of the ten names for a new visit, chosen from the person and the time so it is repeatable. */
+export function rotateAssistantName(base: string, at: string, current: string): string {
+  const fresh = assignAssistantName(`${base}:${at.slice(0, 13)}`);
+  if (fresh !== current) return fresh;
+  return ASSISTANT_NAMES[(ASSISTANT_NAMES.indexOf(current as (typeof ASSISTANT_NAMES)[number]) + 1) % ASSISTANT_NAMES.length];
+}
 import { parseNotificationPreference, preferenceReply } from "../notifications/community-missions.ts";
 import type { IdentityProvisioner } from "../identity/provisioner.ts";
 import { parseProfileCreationRequest } from "../identity/profile-intent.ts";
@@ -233,8 +241,13 @@ export class ConversationCoordinator {
     // One name per person, not per conversation: a person whose chats span several
     // conversations (one per city) keeps meeting the same assistant.
     const identityId = turn.identityId ?? conversation.persistence?.whatsappIdentityId ?? null;
-    if (identityId) conversation.assistantName = assignAssistantName(`identity:${identityId}`);
-    else if (!isAssistantName(conversation.assistantName)) conversation.assistantName = assignAssistantName(turn.conversationId);
+    // A new visit (three hours or more since the last message) brings a new name from the ten, so the chat stays lively;
+    // within a visit the name never changes.
+    const nameBase = identityId ? `identity:${identityId}` : turn.conversationId;
+    const idleHours = conversation.messages.length ? (Date.parse(at) - Date.parse(conversation.updatedAt)) / 3_600_000 : 0;
+    if (!conversation.messages.length && identityId) conversation.assistantName = assignAssistantName(nameBase);
+    else if (!isAssistantName(conversation.assistantName)) conversation.assistantName = assignAssistantName(nameBase);
+    else if (idleHours >= 3) conversation.assistantName = rotateAssistantName(nameBase, at, conversation.assistantName);
     const priorState = conversation.state;
     const userMetadata = {
       ...(turn.media?.length ? { whatsappMedia: turn.media } : {}),
@@ -374,9 +387,17 @@ export class ConversationCoordinator {
         reply = `I received your ${turn.media.map((item) => item.kind === "voice" ? "voice note" : item.kind).join(" and ")}, but I can't read media yet. Please type what you need.`;
         nextState = "clarification_needed";
       } else {
+        // "Thanks", "sorted!", "who are you?": everyday moments get a line from the Wisdom library, not "I didn't understand".
+        const moment = momentOf(turn.text ?? "");
+        const said = moment ? voiceLine(moment, conversation.assistantName ?? "Wisdom", turn.profileName?.trim().split(/\s+/)[0] ?? null) : null;
         // Before admitting we didn't understand, ask Benita: "who sells cement in Gweru" often matches even when the parser can't place it.
-        const found = await this.benitaFreeText(turn.text ?? "");
-        if (found) {
+        const found = said ? null : await this.benitaFreeText(turn.text ?? "");
+        if (said) {
+          action = "answer";
+          reply = moment === "thanks" || moment === "solved" ? `${said}\n\nAnything else I can find for you?` : said;
+          interactive = withButtons(reply, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]);
+          nextState = "ready_for_request";
+        } else if (found) {
           action = "answer";
           reply = found.reply;
           interactive = withButtons(reply, [["btn.helped", "It helped"], ["btn.no_luck", "No luck"], ["btn.menu", "Main menu"]]);

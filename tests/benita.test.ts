@@ -268,3 +268,12 @@ test("Hotel in beightbridge: the town is understood, and with nothing stored Ben
   assert.match(answered.reply, /Found online, check before paying/);
   assert.doesNotMatch(answered.reply, /couldn't find/);
 });
+
+test("'Thanks' and 'who are you?' get a lively Wisdom line, never 'I didn't understand'", async () => {
+  const say = conversation(new InMemoryConnectStore(() => NOW));
+  const thanks = await say("Thanks");
+  assert.doesNotMatch(thanks.reply, /didn't quite get|ears are on holiday|Lost me|riddle|beyond me/i);
+  assert.match(thanks.reply, /Anything else I can find for you\?/);
+  const who = await say("are you a bot?");
+  assert.ok(who.reply.includes(who.conversation.assistantName ?? "?"), who.reply);
+});

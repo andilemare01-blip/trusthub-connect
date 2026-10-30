@@ -1,0 +1,44 @@
+.page {
+  --teal: #0f4f47;
+  --cream: #f7f3ec;
+  --line: #e6e1d8;
+  --ink: #13201e;
+  --muted: #4f5f5c;
+  min-height: 100vh;
+  background: var(--cream);
+  color: var(--ink);
+  padding: 20px 16px 40px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 640px;
+  margin: 0 auto;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+.top { display: flex; align-items: center; gap: 10px; }
+.top b { display: block; font-size: 17px; }
+.top small { color: var(--muted); }
+.mark { width: 38px; height: 38px; border-radius: 10px; background: var(--teal); color: #fff; display: grid; place-items: center; font-weight: 800; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.card h1 { margin: 0; font-size: 20px; }
+.kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.link { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.muted { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.button { min-height: 42px; border-radius: 21px; border: 0; background: var(--teal); color: #fff; font: inherit; font-weight: 700; padding: 0 16px; cursor: pointer; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.stat { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.stat span { font-size: 13px; color: var(--muted); }
+.stat b { font-size: 26px; font-variant-numeric: tabular-nums; }
+.stat small { font-size: 12px; color: var(--muted); }
+.list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.list li:first-child { border-top: 0; }
+.list span { color: var(--muted); white-space: nowrap; }
+.post { margin: 0; white-space: pre-wrap; font: inherit; font-size: 14px; line-height: 1.5; background: var(--cream); border-radius: 10px; padding: 12px; }
+@media (prefers-color-scheme: dark) {
+  .page { --cream: #0f1716; --line: #26312f; --ink: #eef3f1; --muted: #a9b7b4; }
+  .card, .stat { background: #16201f; }
+  .button { background: #2a8a7c; }
+}

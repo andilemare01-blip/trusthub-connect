@@ -4,7 +4,7 @@
  * by row-level security. Errors are thrown with the operation name only, never
  * with row contents or phone numbers.
  */
-import type { NewsItem, TownSignals } from "./store.ts";
+import type { NewsItem, PersonSummary, TownSignals } from "./store.ts";
 import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
 import { listingPrice, refineListings } from "./store.ts";
@@ -358,6 +358,33 @@ export class SupabaseConnectStore implements ConnectStore {
       console.error(JSON.stringify({ event: "benita.live_failed", errorType: error instanceof Error ? error.name : "unknown" }));
       return 0;
     }
+  }
+
+  async savePersonName(identityId: string, name: string): Promise<void> {
+    const result = await this.db.from("whatsapp_identities").update({ display_name: name.slice(0, 60), name_asked_at: new Date().toISOString() }).eq("id", identity(identityId));
+    if (result.error) throw new ConnectStoreError("Save name", result.error);
+  }
+
+  async markNameAsked(identityId: string): Promise<void> {
+    await this.db.from("whatsapp_identities").update({ name_asked_at: new Date().toISOString() }).eq("id", identity(identityId));
+  }
+
+  async personSummary(identityId: string): Promise<PersonSummary> {
+    const id = identity(identityId);
+    const [person, searches, referral] = await Promise.all([
+      this.db.from("whatsapp_identities").select("display_name,created_at").eq("id", id).limit(1),
+      this.db.from("connect_search_log").select("query_text,category,city,created_at").eq("whatsapp_identity_id", id).order("created_at", { ascending: false }).limit(5),
+      this.db.from("connect_referrals").select("agent_id").eq("whatsapp_identity_id", id).limit(1),
+    ]);
+    const row = (Array.isArray(person.data) ? person.data[0] : null) as Row | undefined;
+    const agentId = (Array.isArray(referral.data) ? referral.data[0] as Row | undefined : undefined)?.agent_id;
+    const agent = agentId ? await this.db.from("connect_agents").select("name").eq("id", agentId).limit(1) : null;
+    return {
+      name: text(row?.display_name),
+      joinedAt: text(row?.created_at),
+      agent: agent && Array.isArray(agent.data) ? text((agent.data[0] as Row | undefined)?.name) : null,
+      recentSearches: (Array.isArray(searches.data) ? searches.data as Row[] : []).map((entry) => ({ text: String(entry.query_text ?? entry.category ?? ""), city: text(entry.city), at: String(entry.created_at ?? "") })),
+    };
   }
 
   async news(query: { town?: string | null; text?: string | null; topics?: string[] | null; limit?: number }): Promise<NewsItem[]> {

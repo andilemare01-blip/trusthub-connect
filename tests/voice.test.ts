@@ -61,3 +61,20 @@ test("listings that match more of the words come first, and Jobs/jobs category c
 test("a lower-case 'i'm' in a library line is written properly", () => {
   assert.equal(personalise("Absolutely - i'm right here. i think so.", "Sarah", null), "Absolutely - I'm right here. I think so.");
 });
+
+import { shiftNames } from "../lib/conversation-coordinator/coordinator.ts";
+import { handoverLine } from "../lib/connect/persona.ts";
+import { momentOf as moment } from "../lib/connect/voice.ts";
+
+test("each part of the day brings a different teammate, who says who they are taking over from", () => {
+  const morning = shiftNames("identity:7", "2026-10-30T07:00:00.000Z");  // 09:00 in Harare
+  const afternoon = shiftNames("identity:7", "2026-10-30T12:00:00.000Z"); // 14:00
+  assert.equal(afternoon.previous, morning.current);
+  assert.notEqual(afternoon.current, afternoon.previous);
+  assert.equal(shiftNames("identity:7", "2026-10-30T08:30:00.000Z").current, morning.current, "the same name all morning");
+  assert.match(handoverLine("Lizzie", "Tanaka", new Date("2026-10-30T12:00:00.000Z")), /^It's Lizzie! I'm taking over from Tanaka this afternoon, I promise I'm more fun\.$/);
+});
+
+test("small talk is recognised however people say it", () => {
+  for (const text of ["How are you anyway?", "hey how are you doing", "how's your day", "you good?", "How are you Tanaka"]) assert.equal(moment(text), "smalltalk_weather", text);
+});

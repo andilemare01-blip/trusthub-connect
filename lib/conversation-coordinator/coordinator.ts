@@ -7,7 +7,31 @@ import { createAnswerGenerator } from "../answer-resolution/response-generator.t
 import type { AnswerGenerator } from "@/types/answer";
 import { ASSISTANT_NAMES, assignAssistantName, isAssistantName, isGreeting, loadWisdomLibrary, type WisdomLibrary } from "./wisdom-library.ts";
 import { firstNameOf, momentOf, voiceLine } from "../connect/voice.ts";
+import { handoverLine } from "../connect/persona.ts";
 import { isAdviceQuestion, isOpenQuestion } from "../connect/brain.ts";
+
+/** Handover lines waiting to go in front of this turn's reply, per conversation. */
+const HANDOVERS = new WeakMap<object, string>();
+function withHandover(conversation: object, reply: string): string {
+  const line = HANDOVERS.get(conversation);
+  if (!line) return reply;
+  HANDOVERS.delete(conversation);
+  return reply.includes("taking over from") ? reply : `${line}\n\n${reply}`;
+}
+
+/** The part of the day in Zimbabwe (UTC+2): each person meets a new teammate in the morning, afternoon and evening. */
+export function shiftNames(base: string, at: string): { current: string; previous: string } {
+  const local = new Date(Date.parse(at) + 2 * 3_600_000);
+  const hour = local.getUTCHours();
+  const day = local.toISOString().slice(0, 10);
+  const slot = hour < 12 ? 0 : hour < 17 ? 1 : 2;
+  const yesterday = new Date(local.getTime() - 86_400_000).toISOString().slice(0, 10);
+  const key = (date: string, part: number) => `${base}:${date}:${part}`;
+  const current = assignAssistantName(key(day, slot));
+  let previous = slot === 0 ? assignAssistantName(key(yesterday, 2)) : assignAssistantName(key(day, slot - 1));
+  if (previous === current) previous = ASSISTANT_NAMES[(ASSISTANT_NAMES.indexOf(current as (typeof ASSISTANT_NAMES)[number]) + 1) % ASSISTANT_NAMES.length];
+  return { current, previous };
+}
 
 /** A different one of the ten names for a new visit, chosen from the person and the time so it is repeatable. */
 export function rotateAssistantName(base: string, at: string, current: string): string {
@@ -266,8 +290,17 @@ export class ConversationCoordinator {
     // within a visit the name never changes.
     const nameBase = identityId ? `identity:${identityId}` : turn.conversationId;
     const idleHours = conversation.messages.length ? (Date.parse(at) - Date.parse(conversation.updatedAt)) / 3_600_000 : 0;
-    if (!conversation.messages.length && identityId) conversation.assistantName = assignAssistantName(nameBase);
-    else if (!isAssistantName(conversation.assistantName)) conversation.assistantName = assignAssistantName(nameBase);
+    let handoverFrom: string | null = null;
+    if (identityId) {
+      // A person meets a different teammate each part of the day (morning, afternoon, evening); the new one says hello
+      // and that they are taking over, the way a real team would.
+      const shift = shiftNames(nameBase, at);
+      if (!conversation.messages.length) handoverFrom = shift.previous;
+      else if (isAssistantName(conversation.assistantName) && conversation.assistantName !== shift.current && idleHours >= 1) handoverFrom = conversation.assistantName;
+      if (!conversation.messages.length || !isAssistantName(conversation.assistantName) || handoverFrom) conversation.assistantName = shift.current;
+      // Coming back to an open chat later in the day: the new teammate introduces themselves before answering.
+      if (handoverFrom && conversation.messages.length) HANDOVERS.set(conversation, handoverLine(shift.current, handoverFrom, new Date(at)));
+    } else if (!isAssistantName(conversation.assistantName)) conversation.assistantName = assignAssistantName(nameBase);
     else if (idleHours >= 3) conversation.assistantName = rotateAssistantName(nameBase, at, conversation.assistantName);
     const priorState = conversation.state;
     const userMetadata = {
@@ -283,6 +316,7 @@ export class ConversationCoordinator {
       profileName: turn.profileName ?? null,
       providerMessageId: turn.providerMessageId ?? null,
       assistantName: conversation.assistantName ?? "Wisdom",
+      handoverFrom,
       senderPhoneForListing: turn.senderPhoneNumber ?? null,
     };
 
@@ -530,6 +564,11 @@ export class ConversationCoordinator {
     if (action === "request_human_permission") conversation.pendingPermission = "human";
     if (discovery && resolution && turn.providerMessageId) await this.logDiscovery(identityId, searched!, resolution, turn.providerMessageId);
 
+    const introducedReply = withHandover(conversation, reply);
+    if (introducedReply !== reply) {
+      if (interactive && interactive.body === reply) interactive = { ...interactive, body: introducedReply.length > 1024 ? "What would you like to do next?" : introducedReply };
+      reply = introducedReply;
+    }
     conversation.state = nextState;
     conversation.lastResolution = resolution;
     conversation.lastAction = action;
@@ -620,6 +659,12 @@ export class ConversationCoordinator {
   }
 
   private async finishConnect(conversation: RuntimeConversation, turn: IncomingTurn, result: ConnectReply, priorState: RuntimeState, at: string): Promise<TurnResult> {
+    const introduced = withHandover(conversation, result.reply);
+    if (introduced !== result.reply) {
+      const body = result.interactive?.body ?? "";
+      const sameBody = !!body && (body === result.reply || result.reply.startsWith(body));
+      result = { ...result, reply: introduced, ...(result.interactive && sameBody ? { interactive: { ...result.interactive, body: introduced.length > 1024 ? "What would you like to do next?" : introduced } } : {}) };
+    }
     // "Hi" or MENU in the middle of a search question shows the menu but keeps the
     // question open, so typing the missing city afterwards still finishes that search.
     const keepClarification = result.action === "show_menu" && !conversation.connect && priorState === "clarification_needed" && !!conversation.lastRequest;
@@ -648,7 +693,7 @@ export class ConversationCoordinator {
     }
     // A results screen (search results, Community intelligence, a brain answer) is an answer, not an open question,
     // so a later "Bulawayo" is never mistaken for the reply to an old search.
-    const nextState: RuntimeState = result.state && result.action !== "answer" ? "clarification_needed" : result.state ? "ready_for_request" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
+    const nextState: RuntimeState = result.state && result.action !== "answer" && result.action !== "show_menu" ? "clarification_needed" : result.state ? "ready_for_request" : result.handoff ? "ready_for_request" : result.action === "answer" ? "resolved" : "ready_for_request";
     conversation.state = nextState;
     conversation.lastAction = result.action;
     conversation.updatedAt = at;

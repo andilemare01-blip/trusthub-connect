@@ -14,8 +14,8 @@
  */
 import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
-import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
-import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
+import { categorise, correctTown, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
+import { goodbyeLine, handoverLine, humourLine, smalltalkLine, styleFor, thanksLine } from "./persona.ts";
 import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
 import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
 import { benitaLine } from "../benita/index.ts";
@@ -24,7 +24,7 @@ import { brainFallback, isAdviceQuestion, isOpenQuestion } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
-export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback" | "brain";
+export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback" | "brain" | "name";
 type Scalar = string | number | boolean | null;
 export interface ConnectJourneyState { flow: ConnectFlow; step: string; data: Record<string, Scalar> }
 
@@ -33,6 +33,8 @@ export interface ConnectContext {
   profileName: string | null;
   providerMessageId: string | null;
   assistantName: string;
+  /** The teammate who was on before this one, when the name has just changed (morning to afternoon...). */
+  handoverFrom?: string | null;
   /** The sender's own number; stored on listings they post so buyers can reach them. */
   senderPhoneForListing?: string | null;
 }
@@ -55,7 +57,7 @@ const CANCEL = /^(?:cancel|stop|exit|quit|back|main menu)$/i;
 const GREETING = /^(?:hi+|hie|hey|hello|hullo|helo|howzit|good (?:morning|afternoon|evening|day)|mhoro|mhoroi|makadii|salibonani|sawubona|start)\b[\s!.,]*$/i;
 const REVIEW_COOLDOWN_DAYS = 30;
 /** Screens that show a result rather than wait for a specific answer; a typed menu number still works there. */
-const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "brain.followup", "scam.result", "feedback.offer", "add_business.review_existing"]);
+const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "brain.followup", "name.ask", "scam.result", "feedback.offer", "add_business.review_existing"]);
 
 function buttons(body: string, items: [id: string, title: string][], footer?: string): WhatsAppInteractiveMessage {
   return { type: "button", body: clipText(body, 1024), buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })), ...(footer ? { footer: clip(footer, 60) } : {}) };
@@ -102,6 +104,17 @@ function waLink(phone: string | null): string | null {
   const digits = (phone ?? "").replace(/\D/g, "");
   const local = digits.startsWith("263") ? digits.slice(3) : digits.startsWith("0") ? digits.slice(1) : digits;
   return /^7[1378]\d{7}$/.test(local) ? `wa.me/263${local}` : null;
+}
+
+/** The name in a reply like "Andile", "my name is Andile Moyo" or "call me Tino", or null when it isn't a name. */
+export function plausibleName(text: string): string | null {
+  const cleaned = text.trim().replace(/^(?:my name is|my names are|my name's|i am|i'm|im|call me|you can call me|it's|its|this is|name:?)\s+/i, "").replace(/[.!🙂😊]+$/u, "").trim();
+  const words = cleaned.split(/\s+/);
+  if (!cleaned || words.length > 3 || cleaned.length > 40) return null;
+  if (!words.every((word) => /^[\p{L}][\p{L}'-]{1,19}$/u.test(word))) return null;
+  if (/^(hi|hie|hey|hello|yes|no|ok|okay|thanks|menu|help|skip|plumber|hotel|jobs?|house|rent|find|search|harare|bulawayo|mutare|gweru|masvingo|good|fine|nothing|what|who|where|how)$/i.test(words[0])) return null;
+  if (correctTown(cleaned)) return null;
+  return words.map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()).join(" ");
 }
 
 /** True when two business names are the same business, ignoring case, punctuation and words like "Pvt Ltd". */
@@ -187,6 +200,15 @@ export class ConnectJourneys {
       if (/^(?:feedback|suggestion|complaint)\s*$/i.test(message)) return this.askFeedback();
       if (isFeedbackCue(message)) return await this.recordFeedback(message, context);
       if (/\b(?:my (?:credits|profile|account|balance)|create (?:a |my )?(?:profile|account)|sign ?up|register)\b/i.test(message)) return await this.profile(context);
+      // "My name is Andile" at any time saves the name.
+      if (context.identityId && /^(?:my name is|my names are|my name's|call me|you can call me)\s+\S/i.test(message)) {
+        const name = plausibleName(message);
+        if (name) {
+          await this.store.savePersonName?.(context.identityId, name).catch(() => undefined);
+          const body = `Got it, ${name}! I'll remember you. What can I find for you?`;
+          return { reply: body, interactive: buttons(body, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
+        }
+      }
       const social = this.socialReply(message, context);
       if (social) return social;
       // "review Clevers Hotel" / "I want to rate Sunny Bakery" starts a review of that business.
@@ -228,10 +250,17 @@ export class ConnectJourneys {
     const hello = returning
       ? (greeted ? voiceLine("returning", name, firstName) : null)
       : voiceLine("new_hi", name, firstName, undefined, undefined, (line) => line.includes(name));
-    const introduce = (line: string) => line.includes(name) ? line : `${line} It's ${name} on duty today 🙂`;
+    // A returning person meets the teammate on this shift, who says who they're taking over from.
+    const introduce = (line: string) => context.handoverFrom && context.handoverFrom !== name ? `${line} ${handoverLine(name, context.handoverFrom, this.now())}` : line.includes(name) ? line : `${line} It's ${name} on duty today 🙂`;
     const body = returning
       ? (greeted && hello ? `${introduce(hello)}${/[?]\s*$/.test(hello) ? "" : " What would you like to do?"}` : `${greeted ? `Welcome back${firstName ? `, ${firstName}` : ""}! ` : ""}It's ${name}. What would you like to do?`)
-      : `${hello ?? `Hi, I'm ${name}. I help you find trusted businesses, buy and sell, and see what's happening around you.`}\n\nWhat would you like to do?`;
+      : `${hello ?? `Hi, I'm ${name}. I help you find trusted businesses, buy and sell, and see what's happening around you.`}${styleFor(name).signature ? ` ${styleFor(name).signature}` : ""}\n\nWhat would you like to do?`;
+    // A new person is asked for a name once, so Wisdom can recognise them next time.
+    // Anything that isn't a name (a menu number, a search) simply carries on, so the question never gets in the way.
+    if (greeted && !returning && !context.profileName && context.identityId) {
+      const asked = `${body}\n\nP.S. What should I call you? Just type your first name.`;
+      return { reply: `${body}\n\n${menuText()}\n\nP.S. What should I call you? Just type your first name.`, interactive: menuInteractive(asked), state: { flow: "name", step: "ask", data: { after: "menu" } }, action: "show_menu" };
+    }
     return { reply: `${body}\n\n${menuText()}`, interactive: menuInteractive(body), state: null, action: "show_menu" };
   }
 
@@ -313,6 +342,7 @@ export class ConnectJourneys {
       case "listing_search": return await this.listingSearch(state, text, context);
       case "area": return await this.area(state, text, context);
       case "brain": return await this.brainFollowUp(state, text, context);
+      case "name": return await this.nameStep(state, text, context);
       case "scam": return await this.scam(state, text, context);
       case "ask": return await this.ask(state, text, context);
       case "read_reviews": return await this.readReviewsFromText(text);
@@ -396,6 +426,12 @@ export class ConnectJourneys {
         saved.status === "published" ? "Your review is live." : "It will appear after a quick check.",
         `+1 credit · you now have ${credit.balance}`,
       ];
+      // Someone who hasn't left a name is asked once, right after their first review, so others see who reviewed.
+      if (!context.profileName) {
+        lines.push("", "P.S. What should I call you? Reply with your first name so I recognise you next time, or tap *Skip*.");
+        const asked = lines.join("\n");
+        return { reply: asked, interactive: buttons(asked, [["btn.skip", "Skip"], ["menu.review", "Review another"], ["btn.menu", "Main menu"]]), state: { flow: "name", step: "ask", data: { after: "review" } }, action: "answer" };
+      }
       const reply = lines.join("\n");
       return { reply, interactive: buttons(reply, [["menu.review", "Review another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
     }
@@ -797,6 +833,26 @@ export class ConnectJourneys {
     return { reply, interactive: buttons(reply, [["menu.area", "Community intel"], ["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: { flow: "brain", step: "followup", data: { question: clip(question, 300), answer: clip(body, 900), city } }, action: "answer" };
   }
 
+  /** The reply to "what should I call you?": a name is saved; Skip or a real request moves on. */
+  private async nameStep(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply> {
+    const after = String(state.data.after ?? "menu");
+    const next = after === "review" ? "Thanks again for the review!" : after === "profile" ? "Your profile is updated." : "What would you like to do?";
+    if (chose(text, "btn.skip", "skip", "later", "not now", ...NO)) {
+      if (context.identityId) await this.store.markNameAsked?.(context.identityId).catch(() => undefined);
+      const body = `No problem. ${next}`;
+      return { reply: after === "menu" ? `${body}\n\n${menuText()}` : body, interactive: after === "menu" ? menuInteractive(body) : buttons(body, [["btn.menu", "Main menu"]]), state: null, action: after === "menu" ? "show_menu" : "answer" };
+    }
+    const name = plausibleName(text);
+    if (!name || !context.identityId) {
+      if (context.identityId) await this.store.markNameAsked?.(context.identityId).catch(() => undefined);
+      // Not a name: treat it as a fresh message (a menu number, a search, a question).
+      return (await this.handle(text, context, null)) ?? { reply: "", state: null, action: "answer", pass: true };
+    }
+    await this.store.savePersonName?.(context.identityId, name).catch(() => undefined);
+    const body = `Nice to meet you, ${name}! You're saved, so I'll recognise you next time. ${next}`;
+    return { reply: after === "menu" ? `${body}\n\n${menuText()}` : body, interactive: after === "menu" ? menuInteractive(body) : buttons(body, [["menu.review", "Review another"], ["btn.menu", "Main menu"]]), state: null, action: after === "menu" ? "show_menu" : "answer" };
+  }
+
   /** After a brain answer: a follow-up continues the conversation; anything else is a new request. */
   private async brainFollowUp(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply> {
     const followUp = /^(?:what about|how about|and (?:in|for|what|how)|also|more|tell me more|go on|why|explain|elaborate|what else|anything else|which (?:one|is)|how (?:much|many|long|do|can)|is (?:it|that|there)|are there|should i|can i|ok(?:ay)?,? (?:what|how|and))\b/i.test(text.trim())
@@ -942,15 +998,24 @@ export class ConnectJourneys {
 
   private async profile(context: ConnectContext): Promise<ConnectReply> {
     if (!context.identityId) return this.requireIdentity(null);
-    const [balance, activity] = await Promise.all([this.store.creditBalance(context.identityId), this.store.activity(context.identityId)]);
+    const [balance, activity, person] = await Promise.all([
+      this.store.creditBalance(context.identityId), this.store.activity(context.identityId),
+      this.store.personSummary ? this.store.personSummary(context.identityId).catch(() => null) : Promise.resolve(null),
+    ]);
+    const name = person?.name ?? context.profileName;
+    const since = person?.joinedAt ? new Date(person.joinedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Africa/Harare" }) : null;
+    const searches = (person?.recentSearches ?? []).filter((item) => item.text.trim());
     const reply = [
-      "*Your TrustHub profile*", "",
-      `Name: ${context.profileName ?? "Not set yet"}`,
+      `*${name ? `${name}'s` : "Your"} TrustHub profile*`, "",
+      `Name: ${name ?? "Not set yet (reply *my name is ...* to add it)"}`,
+      ...(since ? [`With TrustHub since: ${since}`] : []),
       `Credits: ${balance}`,
       `Reviews: ${activity.reviews} · Listings: ${activity.listings} · Businesses added: ${activity.businesses}`,
+      ...(searches.length ? ["", "*Your recent searches*", ...searches.map((item) => `• ${clip(item.text, 50)}${item.city ? ` · ${item.city}` : ""}`)] : []),
+      ...(person?.agent ? ["", `Invited by ${person.agent}, a TrustHub agent.`] : []),
       "", "Earn 1 free credit for every review, business or listing you add. Credits are used for deep questions in Ask Wisdom.",
     ].join("\n");
-    return { reply, interactive: buttons(reply, [["btn.feedback", "Send feedback"], ["btn.menu", "Main menu"]]), state: { flow: "feedback", step: "offer", data: {} }, action: "answer" };
+    return { reply, interactive: buttons(reply, [["btn.change_name", name ? "Change my name" : "Add my name"], ["btn.feedback", "Send feedback"], ["btn.menu", "Main menu"]]), state: { flow: "feedback", step: "offer", data: {} }, action: "answer" };
   }
 
   /** Saves feedback in one step when the message already says what the problem is. */
@@ -967,6 +1032,7 @@ export class ConnectJourneys {
 
   private async feedback(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply | null> {
     if (chose(text, "btn.feedback", "send feedback", "feedback")) return this.askFeedback();
+    if (chose(text, "btn.change_name", "change my name", "add my name", "change name")) return { reply: "What should I call you? Type your first name.", state: { flow: "name", step: "ask", data: { after: "profile" } }, action: "clarify" };
     // On the profile screen, a typed message that isn't "Send feedback" is a new request.
     if (state.step === "offer") return { reply: "", state: null, action: "answer", pass: true };
     if (!context.identityId) return this.requireIdentity(null);

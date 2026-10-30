@@ -31,10 +31,33 @@ import { createDeepQuestionAnswerer } from "../connect/ask-wisdom.ts";
 
 export type TrustedTurnContext = StartPersistentConversation;
 
+const REFERRAL = /\(?\s*\bref[:\s-]*([A-Za-z0-9]{4,12})\s*\)?/i;
+
+/**
+ * Reads the name a person left (whatsapp_identities.display_name) when their TrustHub profile has none, and
+ * records the agent behind a referral code in the message (first agent wins), removing the code from the text.
+ */
+async function personContext(client: ReturnType<typeof createSupabaseServerClient>, identityId: string | number | null, text: string, profileName: string | null): Promise<{ text: string; profileName: string | null }> {
+  if (!identityId) return { text, profileName };
+  let cleaned = text;
+  const ref = REFERRAL.exec(text);
+  if (ref) {
+    cleaned = text.replace(ref[0], " ").replace(/\s+/g, " ").trim() || "Hi";
+    const agent = await client.from("connect_agents").select("id").eq("code", ref[1].toUpperCase()).eq("active", true).limit(1);
+    const agentId = Array.isArray(agent.data) ? (agent.data[0] as { id?: unknown } | undefined)?.id : undefined;
+    if (agentId) await client.from("connect_referrals").upsert({ whatsapp_identity_id: identityId, agent_id: agentId }, { onConflict: "whatsapp_identity_id", ignoreDuplicates: true });
+  }
+  if (profileName) return { text: cleaned, profileName };
+  const found = await client.from("whatsapp_identities").select("display_name").eq("id", identityId).limit(1);
+  const name = Array.isArray(found.data) ? (found.data[0] as { display_name?: unknown } | undefined)?.display_name : null;
+  return { text: cleaned, profileName: typeof name === "string" && name.trim() ? name.trim() : null };
+}
+
 export async function handlePersistentTrustHubTurn(
-  turn: Omit<IncomingTurn, "conversationId">,
+  incomingTurn: Omit<IncomingTurn, "conversationId">,
   trustedContext: TrustedTurnContext,
 ) {
+  let turn = incomingTurn;
   const startedAt = Date.now();
   if (turn.correlationId) logWhatsAppDiagnostic(turn.correlationId, "persistent_turn_entered", { outcome: "passed" });
   const client = createSupabaseServerClient();
@@ -92,6 +115,9 @@ export async function handlePersistentTrustHubTurn(
     ? new AiAnswerGenerator(createAnswerGenerator(), new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client), undefined, undefined, aiFailures), turn.providerMessageId)
     : undefined;
   const connectStore = new SupabaseConnectStore(client as unknown as ConnectDbClient);
+  // The name someone gave Wisdom, and the agent whose link brought them ("Hi (ref TINO1)").
+  const person = await personContext(client, persistenceContext.whatsappIdentityId ?? null, turn.text, turn.profileName ?? null).catch(() => ({ text: turn.text, profileName: turn.profileName ?? null }));
+  turn = { ...turn, text: person.text, profileName: person.profileName };
   const deepAnswerer = aiStatus.enabled ? createDeepQuestionAnswerer(new AiGateway(aiStatus, new RuntimeEventAiSpendLedger(client), undefined, undefined, aiFailures), connectStore) : undefined;
   const connect = { store: connectStore, journeys: new ConnectJourneys(connectStore, deepAnswerer) };
   try {

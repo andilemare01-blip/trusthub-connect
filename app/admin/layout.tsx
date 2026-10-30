@@ -5,6 +5,8 @@ export const metadata: Metadata = {
   title: "TrustHub Admin",
   description: "TrustHub Connect operations dashboard.",
   robots: { index: false, follow: false },
+  appleWebApp: { capable: true, title: "TrustHub", statusBarStyle: "default" },
+  icons: { icon: "/icon-192.png", apple: "/apple-icon.png" },
 };
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

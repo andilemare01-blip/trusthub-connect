@@ -131,6 +131,8 @@ export class AiGateway {
           model,
           temperature: 0,
           max_tokens: config.maxOutputTokens,
+          // Free "thinking" models can spend the whole budget reasoning and return no answer: keep reasoning short and out of the reply.
+          reasoning: { effort: "low", exclude: true },
           messages: [{ role: "system", content: request.system }, { role: "user", content: request.user }],
           ...(request.json ? { response_format: { type: "json_object" } } : {}),
         }),

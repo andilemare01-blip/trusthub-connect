@@ -13,12 +13,12 @@ export function isOpenQuestion(text: string): boolean {
   const message = text.trim();
   if (message.length < 12 || message.length > 500) return false;
   if (/^(?:find|search|looking for|i need|i'?m looking|where can i (?:buy|find|get)|where is|show me|list)\b/i.test(message)) return false;
-  return /\b(advice|advise|recommend|suggest|should i|shall i|is it (?:worth|wise|good|safe)|worth it|how (?:do|can|should|would) i|how to|what (?:business|businesses|kind of business|is the best way|can i sell|sells)|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|ideas? for|tips?|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|compare|difference between|explain|why (?:is|are|do|does)|what do you think|your opinion|trends?|market for)\b/i.test(message);
+  return /\b(advice|advise|recommend|suggest|should i|shall i|is it (?:a )?(?:worth|wise|good|safe|smart|bad)|worth it|how (?:do|can|should|would) i|how to|what (?:business|businesses|kind of business|is the best way|can i sell|sells)|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|ideas? for|tips?|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|compare|difference between|explain|why (?:is|are|do|does)|what do you think|your opinion|trends?|market for)\b/i.test(message);
 }
 
 /** Questions that are about advice or the market even when they name a kind of business. */
 export function isAdviceQuestion(text: string): boolean {
-  return /\b(advice|advise|should i|shall i|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|worth it|market for|trends?)\b/i.test(text);
+  return /\b(advice|advise|good idea|should i|shall i|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|worth it|market for|trends?)\b/i.test(text);
 }
 
 const money = (value: number) => `$${Math.round(value).toLocaleString("en-US")}`;
@@ -28,6 +28,9 @@ export function brainFallback(question: string, city: string | null, pulse: Area
   const where = city ?? "your area";
   const business = /\b(business|start|opportunit|demand|sell|hustle|make money|idea|profitable|market)\b/i.test(question);
   if (!business) return intelligenceFallback(question, where, signals, news);
+  // Only real services count as demand; a question someone typed ("to start a business") is not a category.
+  const real = (label: string) => label.split(/\s+/).length <= 3 && !/^(to|how|what|where|i|my)\b/i.test(label);
+  pulse = pulse ? { ...pulse, notFound: pulse.notFound.filter((item) => real(item.label)), topSearches: pulse.topSearches.filter((item) => real(item.label)) } : null;
   const parts: string[] = [`Here's what TrustHub's data shows for ${where}, so you can decide with real numbers:`];
   if (pulse?.notFound.length) parts.push("", "*Wanted, but nobody listed* (the clearest gaps):", ...pulse.notFound.slice(0, 5).map((item) => `• ${item.label}: asked ${item.count} ${item.count === 1 ? "time" : "times"}, nobody found`));
   if (pulse?.topSearches.length) parts.push("", "*What people search for most*:", ...pulse.topSearches.slice(0, 5).map((item) => `• ${item.label} (${item.count})`));

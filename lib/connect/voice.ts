@@ -24,7 +24,7 @@ export function personalise(text: string, assistantName: string, firstName: stri
   let line = applyAssistantName(text, assistantName);
   if (firstName) line = line.replace(NAME, firstName);
   else line = line.replace(new RegExp(`,\\s*(?:${SAMPLE_NAMES.join("|")})\\b`, "g"), "").replace(new RegExp(`\\b(?:${SAMPLE_NAMES.join("|")})\\b,?\\s*`, "g"), "");
-  return line.replace(/\[smile\]/g, "🙂").replace(/<3/g, "❤️").replace(/\s+([.,!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  return line.replace(/(^|[\s-])i('m|'ll|'ve|'d)?(?=[\s.,!?])/g, (_, gap: string, rest?: string) => `${gap}I${rest ?? ""}`).replace(/\[smile\]/g, "🙂").replace(/<3/g, "❤️").replace(/\s+([.,!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
 }
 
 /**

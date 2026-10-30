@@ -17,12 +17,13 @@ import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSe
 import { categorise, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
 import { goodbyeLine, humourLine, smalltalkLine, thanksLine } from "./persona.ts";
 import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
+import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
 import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
-import { brainFallback, isAdviceQuestion } from "./brain.ts";
+import { brainFallback, isAdviceQuestion, isOpenQuestion } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
-export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback";
+export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback" | "brain";
 type Scalar = string | number | boolean | null;
 export interface ConnectJourneyState { flow: ConnectFlow; step: string; data: Record<string, Scalar> }
 
@@ -53,7 +54,7 @@ const CANCEL = /^(?:cancel|stop|exit|quit|back|main menu)$/i;
 const GREETING = /^(?:hi+|hie|hey|hello|hullo|helo|howzit|good (?:morning|afternoon|evening|day)|mhoro|mhoroi|makadii|salibonani|sawubona|start)\b[\s!.,]*$/i;
 const REVIEW_COOLDOWN_DAYS = 30;
 /** Screens that show a result rather than wait for a specific answer; a typed menu number still works there. */
-const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "scam.result", "feedback.offer", "add_business.review_existing"]);
+const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "brain.followup", "scam.result", "feedback.offer", "add_business.review_existing"]);
 
 function buttons(body: string, items: [id: string, title: string][], footer?: string): WhatsAppInteractiveMessage {
   return { type: "button", body: clipText(body, 1024), buttons: items.slice(0, 3).map(([id, title]) => ({ id, title: clip(title, 20) })), ...(footer ? { footer: clip(footer, 60) } : {}) };
@@ -95,10 +96,18 @@ function parseRating(text: string): number | null {
   return word[text.trim().toLocaleLowerCase()] ?? null;
 }
 
+/** A Zimbabwean mobile number as a WhatsApp link; landlines and malformed numbers are not links. */
 function waLink(phone: string | null): string | null {
-  const digits = phone?.replace(/\D/g, "");
-  return digits && digits.length >= 8 ? `wa.me/${digits}` : null;
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const local = digits.startsWith("263") ? digits.slice(3) : digits.startsWith("0") ? digits.slice(1) : digits;
+  return /^7[1378]\d{7}$/.test(local) ? `wa.me/263${local}` : null;
 }
+
+/** Things people buy and sell (as opposed to services they hire). */
+const GOODS = /\b(car|cars|vehicle|toyota|honda|nissan|mazda|mercedes|bmw|vw|volkswagen|ford|isuzu|hilux|fit|aqua|vitz|corolla|probox|fortuner|land ?cruiser|ranger|truck|kombi|motorbike|phone|iphone|samsung|tecno|infinix|laptop|tv|fridge|stove|sofa|bed|solar panel|inverter|generator|furniture)\b/i;
+
+/** Words that say how someone is shopping, not what they want; they never decide a match. */
+const SHOPPING_WORDS = new Set(["sale", "sell", "selling", "buy", "buying", "cheap", "cheapest", "used", "second", "hand", "want", "need", "looking", "price", "prices", "good", "nice", "best", "affordable", "rent", "renting", "let", "under", "below", "around", "about", "near", "jobs", "job", "vacancy", "vacancies", "hiring"]);
 
 function sourceHost(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -110,7 +119,7 @@ function listingLine(listing: Listing, index: number): string {
   const checked = listing.status === "approved" ? "Checked" : web ? `Found online (${web}), not yet checked` : "Not yet checked";
   const facts = [listing.priceText, [listing.area, listing.city].filter(Boolean).join(", ") || null].filter(Boolean).join(" · ");
   const contact = waLink(listing.phone);
-  return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `Contact: ${contact} · ` : ""}${checked}`;
+  return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `WhatsApp: ${contact} · ` : ""}${checked}`;
 }
 
 interface ListingKind {
@@ -290,6 +299,7 @@ export class ConnectJourneys {
       case "listing": return await this.listing(state, text, context);
       case "listing_search": return await this.listingSearch(state, text, context);
       case "area": return await this.area(state, text, context);
+      case "brain": return await this.brainFollowUp(state, text, context);
       case "scam": return await this.scam(state, text, context);
       case "ask": return await this.ask(state, text, context);
       case "read_reviews": return await this.readReviewsFromText(text);
@@ -622,11 +632,19 @@ export class ConnectJourneys {
         return this.previewListing(data);
       }
       if (chose(text, "btn.again", "search again", "again")) return this.startSearch(String(state.data.kind));
-      // Any other text is treated as a new search of the same kind.
+      // A different kind of request after the results ("accountant jobs" after a house search, "I'm selling my
+      // phone") goes where it belongs; anything that is not about this kind of listing goes back to the coordinator.
+      const natural = await this.naturalListing(text, context);
+      if (natural) return natural;
+      const sameKind = String(state.data.kind) === "houses" ? /\b(house|flat|room|cottage|apartment|stand|bed|rent|let|townhouse|cluster|garden)\b/i
+        : String(state.data.kind) === "jobs" ? /\b(job|jobs|work|vacanc|post|position|role|officer|manager|assistant|driver|accountant|teacher|nurse)\b/i : null;
+      if (sameKind && !sameKind.test(text) && !parsePrice(text) && !parsePlace(text).city) return { reply: "", state: null, action: "answer", pass: true };
+      // "plumber in Avondale" after a car search is a business search, not something to buy.
+      if (String(state.data.kind) === "buy" && !GOODS.test(text) && parseLocalSearchRequest(text)?.category && !parsePrice(text)) return { reply: "", state: null, action: "answer", pass: true };
     }
     const query = text.slice(0, 200);
     const place = parsePlace(query);
-    const words = keywords(query);
+    const words = keywords(query).filter((word) => !SHOPPING_WORDS.has(word.toLocaleLowerCase()));
     const category = kind.category ?? (categorise(query) === "general" ? null : categorise(query));
     const budget = parsePrice(query);
     // For homes, a monthly-sized budget means renting; words like "buy" or "for sale" mean buying.
@@ -636,7 +654,14 @@ export class ConnectJourneys {
       : budget && budget.amount <= 15_000 ? "rent" : null;
     // A home search leaves out offices and shops unless they were asked for.
     const exclude = kind.journey === "houses" && !/\b(office|commercial|warehouse|industrial|shop|retail)\b/i.test(query) ? "\\m(office|offices|commercial|warehouse|industrial|shop|retail)\\M" : null;
-    const results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, area: place.area, maxPrice: budget?.amount ?? null, deal, exclude, limit: 5 });
+    let results = await this.store.searchListings({ intents: kind.intents, words, category, city: place.city, area: place.area, maxPrice: budget?.amount ?? null, deal, exclude, limit: 5 });
+    // Nothing in that town: show what there is elsewhere rather than nothing (a car or a job can travel).
+    let elsewhere = false;
+    if (!results.length && place.city && kind.journey !== "houses" && words.length) {
+      // Elsewhere, only listings that name the thing itself count, not anything in the same broad category.
+      results = await this.store.searchListings({ intents: kind.intents, words, category: null, city: null, area: null, maxPrice: budget?.amount ?? null, deal, exclude, limit: 5 });
+      elsewhere = results.length > 0;
+    }
     await this.store.logSearch({ identityId: context.identityId, journey: kind.journey, category: category ?? words[0] ?? null, city: place.city, area: place.area, queryText: clip(query, 200), resultCount: results.length, sourceMessageId: context.providerMessageId ? `${context.providerMessageId}:${kind.journey}` : null }).catch(() => undefined);
     const nextState: ConnectJourneyState = { flow: "listing_search", step: "results", data: { kind: String(state.data.kind), query } };
     const requestLabel = kind.journey === "jobs" ? "Post I'm available" : "Post a request";
@@ -646,7 +671,7 @@ export class ConnectJourneys {
     }
     const where = place.area ? ` in ${place.area}` : place.city ? ` in ${place.city}` : "";
     const overBudget = budget && results.every((item) => item.withinBudget === false);
-    const lines = [overBudget ? `Nothing at about ${budget!.priceText}${where} yet. Here are the closest I found:` : `Here's what I found${where}:`, "", ...results.map(listingLine), "", results.some((item) => item.sourceUrl) ? "Listings come from the community and public websites. Always see an item before you pay." : "Listings come from the community. Always see an item before you pay."];
+    const lines = [elsewhere ? `Nothing in ${place.city} yet. Here's what I found in other towns:` : overBudget ? `Nothing at about ${budget!.priceText}${where} yet. Here are the closest I found:` : `Here's what I found${where}:`, "", ...results.map(listingLine), "", results.some((item) => item.sourceUrl) ? "Listings come from the community and public websites. Always see an item before you pay." : "Listings come from the community. Always see an item before you pay."];
     const reply = lines.join("\n");
     return { reply, interactive: buttons(reply.length > 1000 ? `${results.length} results found. See the message above.` : reply, [["btn.request", requestLabel], ["btn.again", "Search again"], ["btn.menu", "Main menu"]]), state: nextState, action: "answer" };
   }
@@ -696,7 +721,7 @@ export class ConnectJourneys {
     const text = message.trim();
     if (text.length < 4 || text.length > 300) return null;
     const property = /\b(house|houses|flat|flats|room|rooms|cottage|apartment|stand|townhouse|cluster|bedroom|bedroomed|\d\s?-?bed|bed ?sitter|accommodation to rent|place to (?:rent|stay))\b/i;
-    const goods = /\b(car|cars|vehicle|toyota|honda|nissan|mazda|mercedes|bmw|vw|volkswagen|ford|isuzu|hilux|fit|aqua|vitz|corolla|probox|fortuner|land ?cruiser|ranger|truck|kombi|motorbike|phone|iphone|samsung|tecno|infinix|laptop|tv|fridge|stove|sofa|bed|solar panel|inverter|generator|furniture)\b/i;
+    const goods = GOODS;
     const selling = /^(?:i'?m |i am |we'?re |we are )?(?:selling|sell(?:ing)? my|for sale[:,]?)\b|\bi (?:want|would like|wanna) to sell\b/i;
     const lettingOut = /\b(?:i'?m |i am |we'?re )?(?:renting out|letting out)\b|^to let\b/i;
     const hiring = /\b(?:we'?re hiring|i'?m hiring|we are hiring|looking to hire|need to hire|i want to hire|vacancy at my)\b/i;
@@ -724,10 +749,12 @@ export class ConnectJourneys {
    * Wisdom's brain: a free, considered answer to an open question, from everything TrustHub knows about the place.
    * Returns null only when there is no data at all and no AI, so the caller can fall back.
    */
-  async brainAnswer(question: string, context: ConnectContext): Promise<ConnectReply | null> {
-    const city = parsePlace(question).city ?? (context.identityId ? await this.store.lastCity(context.identityId).catch(() => null) : null) ?? "Harare";
+  async brainAnswer(question: string, context: ConnectContext, earlier?: { question: string; answer: string; city: string } | null): Promise<ConnectReply | null> {
+    const city = parsePlace(question).city ?? earlier?.city ?? (context.identityId ? await this.store.lastCity(context.identityId).catch(() => null) : null) ?? "Harare";
     const reference = `${context.providerMessageId ?? `local:brain:${this.now().getTime()}`}:brain`;
-    const worded = this.answerer ? await this.answerer(question, city, reference, context.assistantName).catch(() => null) : null;
+    // A follow-up carries the last exchange, so "what about Bulawayo?" or "tell me more" continues the conversation.
+    const asked = earlier ? `Earlier in this chat they asked: "${clip(earlier.question, 200)}" and you answered: "${clip(earlier.answer.replace(/\s+/g, " "), 500)}". Their follow-up now: ${question}` : question;
+    const worded = this.answerer ? await this.answerer(asked, city, reference, context.assistantName).catch(() => null) : null;
     let body: string;
     if (worded) body = clipText(worded, 1600);
     else {
@@ -741,7 +768,16 @@ export class ConnectJourneys {
       if (body.startsWith("I haven't seen anything") && !isAdviceQuestion(question)) return null;
     }
     const reply = `${body}\n\n_Ask me a follow-up, or tap Community intelligence for ${city}'s latest._`;
-    return { reply, interactive: buttons(reply, [["menu.area", "Community intel"], ["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
+    return { reply, interactive: buttons(reply, [["menu.area", "Community intel"], ["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state: { flow: "brain", step: "followup", data: { question: clip(question, 300), answer: clip(body, 900), city } }, action: "answer" };
+  }
+
+  /** After a brain answer: a follow-up continues the conversation; anything else is a new request. */
+  private async brainFollowUp(state: ConnectJourneyState, text: string, context: ConnectContext): Promise<ConnectReply> {
+    const followUp = /^(?:what about|how about|and (?:in|for|what|how)|also|more|tell me more|go on|why|explain|elaborate|what else|anything else|which (?:one|is)|how (?:much|many|long|do|can)|is (?:it|that|there)|are there|should i|can i|ok(?:ay)?,? (?:what|how|and))\b/i.test(text.trim())
+      || isOpenQuestion(text) || isIntelligenceQuestion(text);
+    if (!followUp || parseLocalSearchRequest(text)?.category && !isAdviceQuestion(text) && !/^(?:what about|how about)\b/i.test(text.trim())) return { reply: "", state: null, action: "answer", pass: true };
+    const earlier = { question: String(state.data.question ?? ""), answer: String(state.data.answer ?? ""), city: String(state.data.city ?? "Harare") };
+    return await this.brainAnswer(text, context, earlier) ?? { reply: "", state: null, action: "answer", pass: true };
   }
 
   /** A free answer in Community intelligence, from Benita's news, facts and signals; the AI words it when it is available. */
@@ -751,7 +787,7 @@ export class ConnectJourneys {
       this.store.signals ? this.store.signals(city).catch(() => null) : Promise.resolve(null),
     ]);
     const reference = `${context.providerMessageId ?? `local:intel:${this.now().getTime()}`}:intel`;
-    const worded = this.answerer ? await this.answerer(`(Community intelligence about ${city}) ${question}`, city, reference, context.assistantName).catch(() => null) : null;
+    const worded = this.answerer ? await this.answerer(question, city, reference, context.assistantName).catch(() => null) : null;
     const body = `${worded ? clipText(worded, 1400) : intelligenceFallback(question, city, signals, news)}\n\n_Ask another, or tap Main menu._`;
     return { reply: body, interactive: buttons(body, [["btn.change_area", "Change area"], ["btn.menu", "Main menu"]]), state, action: "answer" };
   }

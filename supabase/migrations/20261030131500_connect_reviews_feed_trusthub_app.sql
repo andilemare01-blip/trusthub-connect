@@ -1,0 +1,3 @@
+-- Applied to production via the Supabase MCP. Published WhatsApp reviews of directory businesses
+-- are copied into the TrustHub app's reviews table (once each, tracked in connect_review_app_sync).
+-- See the live function public.connect_sync_review_to_app and trigger connect_review_feeds_app.

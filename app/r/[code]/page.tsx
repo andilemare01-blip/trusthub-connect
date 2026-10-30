@@ -56,6 +56,9 @@ export default async function CardLanding({ params, searchParams }: LandingProps
   const business = card.business;
   const place = [business.area, business.city].filter(Boolean).join(", ");
   const whatsappHref = number ? `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code}`)}` : null;
+  // The TrustHub app's own review page for this business (the app and Connect share the businesses table).
+  const appBase = (process.env.TRUSTHUB_APP_URL ?? "https://trusthub-five.vercel.app").replace(/\/+$/, "");
+  const appHref = `${appBase}/business/${encodeURIComponent(business.id)}/review?from=card&card=${encodeURIComponent(card.code)}`;
 
   return (
     <main className={styles.page}>
@@ -73,11 +76,14 @@ export default async function CardLanding({ params, searchParams }: LandingProps
           {whatsappHref ? (
             <a className={styles.primary} href={whatsappHref}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true"><path d="M4 20l1.3-4A8 8 0 1 1 8 18.7z" /></svg>
-              Review on WhatsApp
+              <span>Review on WhatsApp<small className={styles.hint}>Works on WhatsApp bundles</small></span>
             </a>
           ) : (
             <p className={styles.lead}>WhatsApp reviews are being set up. Please try again soon.</p>
           )}
+          <a className={styles.secondary} href={appHref}>
+            <span>Review in the TrustHub app<small className={styles.hint}>Needs Wi-Fi or mobile data</small></span>
+          </a>
         </div>
       </section>
       <footer className={styles.footer}>

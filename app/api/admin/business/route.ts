@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
       case "deal": await call(admin.db, "ceo_deal_update", { p_deal: uuid(body.id), p_stage: ["new", "talking", "quoted", "won", "lost"].includes(String(body.stage)) ? body.stage : null, p_quoted: money(body.quoted), p_agent: agentId(body.agent) }); break;
       case "deal-post": await call(admin.db, "deal_post", { p_role: "ceo", p_key: "", p_deal: uuid(body.deal), p_body: text(body.body, 2000) }); break;
       case "card-agent": await call(admin.db, "ceo_card_agent", { p_card: uuid(body.card), p_agent: agentId(body.agent) }); break;
+      case "agent-decide": await call(admin.db, "ceo_agent_decide", { p_id: agentId(body.id), p_approve: body.approve === true }); break;
       case "setting": await call(admin.db, "ceo_setting_set", { p_key: text(body.key, 40), p_value: text(body.value, 40) }); break;
       default: return NextResponse.json({ error: "Unknown action." }, { status: 400, headers: noStore });
     }

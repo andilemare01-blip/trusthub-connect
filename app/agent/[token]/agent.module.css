@@ -42,3 +42,10 @@
   .card, .stat { background: #16201f; }
   .button { background: #2a8a7c; }
 }
+.field { display: flex; flex-direction: column; gap: 3px; font-size: 13px; font-weight: 600; }
+.field input { font: inherit; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; }
+.money { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rowLine { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.rowLine:first-of-type { border-top: 0; }
+.rowLine small { display: block; color: var(--muted); }
+.new { color: #b3261e; font-weight: 700; font-size: 12px; }

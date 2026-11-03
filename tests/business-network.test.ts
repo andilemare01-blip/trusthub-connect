@@ -87,3 +87,10 @@ test("Ask Benita fences business data and tells her not to invent", () => {
   assert.equal(parsePost("nope"), null);
   assert.deepEqual(parsePost('{"title":"Hi","body":"There"}'), { title: "Hi", body: "There" });
 });
+
+test("the public front page has no CEO door", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /href="\/business"/);
+  assert.match(page, /href="\/agent\/join"/);
+  assert.doesNotMatch(page, /\/admin|CEO/);
+});

@@ -371,14 +371,16 @@ const MARK = '<svg class="mark" viewBox="0 0 40 40" aria-hidden="true"><circle c
 function renderAuth(mode="in", err=""){
   $("#app").innerHTML = `<div class="wrap auth"><form class="card" id="authForm">
     ${MARK.replace('class="mark"','class="mark" style="width:52px;height:52px"')}
-    <h1>Run your business page on Trusthub.</h1>
+    <span class="eyebrow">For business owners</span>
+    <h1>Run your business page on TrustHub.</h1>
     <p class="muted" style="margin:0">Claim your listing, reply to reviews, talk to customers and see what to fix next.</p>
     <label>Email<input id="email" type="email" autocomplete="email" required></label>
     <label>Password<input id="pw" type="password" autocomplete="${mode==='in'?'current-password':'new-password'}" minlength="6" required></label>
     ${err ? `<div class="lock" style="background:var(--bad-soft);color:var(--bad)">${esc(err)}</div>` : ""}
     <button class="btn" type="submit">${mode==="in" ? "Sign in" : "Create account"}</button>
     <p class="muted" style="margin:0;font-size:14px">${mode==="in" ? "New to Trusthub?" : "Already have an account?"} <button type="button" class="link" id="swap">${mode==="in" ? "Create an account" : "Sign in"}</button></p>
-    <p class="muted" style="margin:0;font-size:13px">Use the same account you use in the Trusthub app. <a href="/business?sample=1">See a sample first</a></p>
+    <p class="muted" style="margin:0;font-size:13px">${mode==="up" ? "This creates a business owner account." : "Use the same account you use in the TrustHub app."} <a href="/business?sample=1">See a sample first</a></p>
+    <p class="muted" style="margin:0;font-size:13px">Want to be an agent instead? <a href="/agent/join">Go to agents</a></p>
   </form></div>`;
   $("#swap").onclick = () => renderAuth(mode==="in" ? "up" : "in");
   $("#authForm").onsubmit = async e => {

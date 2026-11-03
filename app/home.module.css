@@ -1,4 +1,5 @@
 .page {
+  color-scheme: light;
   --malachite: #06382f; --deep: #042a23; --mint: #e6f4ec; --leaf: #bfe3d0; --gold: #f2c14e; --ink: #07211c; --soft: #41584f;
   background: var(--mint); color: var(--ink); min-height: 100vh;
   font-family: var(--font-body), system-ui, sans-serif; line-height: 1.5; font-size: 17px;

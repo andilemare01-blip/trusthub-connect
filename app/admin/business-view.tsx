@@ -12,7 +12,8 @@ type OpenDeal = { id: string; business: string; package: string; contact: string
 type AgentRow = { id: number; name: string; code: string; active: boolean };
 type CardRow = { id: string; code: string; agent_id: number | null; business: string | null };
 type Application = { id: number; name: string; phone: string | null; city: string | null };
-type Desk = { applications: Application[]; claims: Claim[]; payments: Pending[]; deals: OpenDeal[]; agents: AgentRow[]; cards: CardRow[]; settings: Record<string, string> };
+type NewBusiness = { id: string; name: string; category: string | null; city: string; area: string | null; address: string | null; phone: string; applicant: string; role: string; matches: number };
+type Desk = { new_businesses: NewBusiness[]; applications: Application[]; claims: Claim[]; payments: Pending[]; deals: OpenDeal[]; agents: AgentRow[]; cards: CardRow[]; settings: Record<string, string> };
 type Sale = { id: string; at: string; business: string; city: string | null; product: string; amount: number; method: string | null; ref: string | null; agent: string | null; commission: number | null; commission_status: string | null; commission_id: string | null };
 type Revenue = { totals: { revenue: number; sales: number; commission_owed: number; commission_paid: number; net: number }; by_agent: { agent: string; agent_id: number | null; revenue: number; sales: number; owed: number; paid: number }[]; by_product: { product: string; revenue: number; sales: number }[]; by_month: { month: string; revenue: number }[]; rows: Sale[]; cities: string[] };
 
@@ -36,7 +37,7 @@ export function BusinessView({ api }: { api: Api }) {
     try { const result = await api<T>(PATH, post(body)); if (done) setNote(done(result)); await load(); return true; }
     catch (failure) { setError(failure instanceof Error ? failure.message : "That change could not be saved."); return false; }
   }, [api, load]);
-  const waiting = (desk?.applications.length ?? 0) + (desk?.claims.length ?? 0) + (desk?.payments.length ?? 0) + (desk?.deals.filter((deal) => deal.unread).length ?? 0);
+  const waiting = (desk?.new_businesses.length ?? 0) + (desk?.applications.length ?? 0) + (desk?.claims.length ?? 0) + (desk?.payments.length ?? 0) + (desk?.deals.filter((deal) => deal.unread).length ?? 0);
   return (
     <>
       <header className={styles.head}><div><h1>Business</h1><p className={styles.muted}>Your company at a glance. Businesses and agents only ever see their own part of this.</p></div></header>
@@ -61,6 +62,11 @@ function Today({ api, desk, act }: { api: Api; desk: Desk; act: Act }) {
       {desk.applications.length ? <section className={styles.panel}>
         <h2>People who want to be agents</h2>
         {desk.applications.map((person) => <div key={person.id} className={styles.item}><div className={styles.itemText}><b>{person.name}</b><span>{[person.phone, person.city].filter(Boolean).join(" · ")}</span></div><div className={styles.itemActions}><button type="button" className={styles.primarySmall} onClick={() => void act({ action: "agent-decide", id: person.id, approve: true }, () => `${person.name} is now an agent.`)}>Approve</button><button type="button" className={styles.linkBtn} onClick={() => void act({ action: "agent-decide", id: person.id, approve: false })}>Reject</button></div></div>)}
+      </section> : null}
+      {desk.new_businesses.length ? <section className={styles.panel}>
+        <h2>New businesses to confirm</h2>
+        <p className={styles.muted}>These aren&apos;t public yet. Call the number first. Approving lists the business and makes this person its owner.</p>
+        {desk.new_businesses.map((item) => <div key={item.id} className={styles.item}><div className={styles.itemText}><b>{item.name}</b><span>{[item.category, item.area, item.city].filter(Boolean).join(", ")}{item.address ? `. ${item.address}` : ""}</span><span>{item.applicant}, {item.role}: <a href={`tel:${item.phone}`}>{item.phone}</a></span>{item.matches ? <span className={styles.tags}><span className={styles.tag}>Same name is already listed</span></span> : null}</div><div className={styles.itemActions}><button type="button" className={styles.primarySmall} onClick={() => void act({ action: "new-business", id: item.id, approve: true }, () => `${item.name} is confirmed and listed.`)}>Confirm and list</button><button type="button" className={styles.linkBtn} onClick={() => void act({ action: "new-business", id: item.id, approve: false })}>Reject</button></div></div>)}
       </section> : null}
       <section className={styles.panel}>
         <div className={styles.head}><div><h2>Business claims</h2><p className={styles.muted}>One tap approves. Each business gets one owner, so the earliest claim wins.</p></div>

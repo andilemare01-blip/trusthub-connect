@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./admin.module.css";
+import { BusinessView } from "./business-view";
 
 type RangeKey = "today" | "7d" | "30d";
-type View = "founder" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
+type View = "founder" | "business" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
 type QueueKind = "reviews" | "listings" | "businesses" | "scams";
 
 interface Metrics {
@@ -157,6 +158,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
   const waiting = metrics ? metrics.toCheck.reviews + metrics.toCheck.listings + metrics.toCheck.businesses + metrics.toCheck.scamReports : 0;
   const nav: { key: View; label: string; badge?: number }[] = [
     { key: "founder", label: "Founder" },
+    { key: "business", label: "Business" },
     { key: "overview", label: "Overview" },
     { key: "people", label: "People" },
     { key: "agents", label: "Agents" },
@@ -182,6 +184,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
       <main className={styles.main}>
         {error ? <p className={styles.error} role="alert">{error}</p> : null}
         {view === "founder" ? <Founder api={api} /> : null}
+        {view === "business" ? <BusinessView api={api} /> : null}
         {view === "people" ? <People api={api} /> : null}
         {view === "agents" ? <Agents api={api} /> : null}
         {view === "overview" ? <Overview metrics={metrics} range={range} setRange={setRange} /> : null}

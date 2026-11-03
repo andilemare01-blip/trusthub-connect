@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import styles from "./agent.module.css";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { maskNumber, shareText } from "@/lib/connect/agents";
+import { PRODUCT_LABEL } from "@/lib/business/catalog";
 import { CopyButton } from "./copy-button";
+import { NewDeal } from "./business-panel";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +17,13 @@ export const metadata: Metadata = {
 };
 
 type Row = Record<string, unknown>;
+type AgentDesk = {
+  owed: number; paid: number; settings: { website_from_usd?: string } | null;
+  businesses: { name: string; city: string | null; reviews: number; plan: string; claimed: boolean }[];
+  sales: { business: string; product: string; amount: number; at: string; commission: number | null; status: string | null }[];
+  deals: { id: string; business: string; stage: string; last_text: string | null; unread: boolean }[];
+  cards: { code: string; business: string | null; taps: number }[];
+};
 
 /**
  * An agent's private page (the link is the key): their personal link, ready-to-post text, how many people
@@ -34,6 +44,9 @@ export default async function AgentPage({ params }: { params: Promise<{ token: s
   const origin = process.env.NEXT_PUBLIC_SITE_URL ?? "https://trusthub-connect.vercel.app";
   const link = `${origin}/j/${agent.code}`;
   const post = shareText(link);
+  const deskResult = db.rpc ? await db.rpc("agent_desk", { p_token: token }) : { data: null, error: null };
+  const desk = (deskResult.data ?? { owed: 0, paid: 0, businesses: [], sales: [], deals: [], cards: [], settings: {} }) as AgentDesk;
+  const code = String(agent.code);
   const numbers: [string, unknown, string][] = [
     ["People who joined", row.joined, `${Number(row.joined_week ?? 0)} this week`],
     ["Active this week", row.active_week, "used TrustHub in the last 7 days"],
@@ -50,6 +63,34 @@ export default async function AgentPage({ params }: { params: Promise<{ token: s
         <p className={styles.link}>{link}</p>
         <div className={styles.row}><CopyButton text={link} label="Copy link" /><CopyButton text={post} label="Copy a ready post" /></div>
         <p className={styles.muted}>Put it in your WhatsApp status, Facebook, Instagram or TikTok bio. Everyone who taps it and says hi is counted as yours.</p>
+      </section>
+      <section className={styles.card}>
+        <p className={styles.kicker}>My earnings</p>
+        <div className={styles.money}>
+          <div className={styles.stat}><span>Waiting to be paid</span><b>${Number(desk.owed).toFixed(2)}</b></div>
+          <div className={styles.stat}><span>Paid to you</span><b>${Number(desk.paid).toFixed(2)}</b></div>
+        </div>
+        <p className={styles.muted}>You earn commission once on a business&apos;s first website, plan or token payment, as soon as the payment is confirmed.</p>
+        {desk.sales.map((sale, index) => <div key={index} className={styles.rowLine}><span>{sale.business}<small>{PRODUCT_LABEL[sale.product] ?? sale.product} · ${Number(sale.amount).toFixed(2)}</small></span><span>{sale.commission ? `$${Number(sale.commission).toFixed(2)} ${sale.status === "paid" ? "paid" : "owed"}` : "No commission"}</span></div>)}
+      </section>
+      <section className={styles.card}>
+        <p className={styles.kicker}>Sell the Digital Package</p>
+        <p className={styles.muted}>Send a business owner this page. Anyone who asks through it is linked to you. Websites start from ${desk.settings?.website_from_usd ?? "30"}.</p>
+        <p className={styles.link}>{origin}/digital?a={code}</p>
+        <div className={styles.row}><CopyButton text={`${origin}/digital?a=${code}`} label="Copy package link" /><CopyButton text={`${origin}/business?a=${code}`} label="Copy business sign-up link" /><CopyButton text={`${origin}/business?sample=1`} label="Copy sample dashboard" /></div>
+      </section>
+      <section className={styles.card}>
+        <p className={styles.kicker}>My chats</p>
+        {desk.deals.map((deal) => <div key={deal.id} className={styles.rowLine}><Link href={`/agent/${token}/deal/${deal.id}`}>{deal.business}<small>{deal.last_text ?? ""}</small></Link><span>{deal.unread ? <span className={styles.new}>New · </span> : null}{deal.stage}</span></div>)}
+        <NewDeal agent={token} />
+      </section>
+      <section className={styles.card}>
+        <p className={styles.kicker}>My businesses</p>
+        {desk.businesses.length ? desk.businesses.map((business, index) => <div key={index} className={styles.rowLine}><span>{business.name}<small>{business.city ?? ""}</small></span><span>{business.reviews} reviews · {business.claimed ? business.plan : "not claimed yet"}</span></div>) : <p className={styles.muted}>Businesses you sign up show here.</p>}
+      </section>
+      <section className={styles.card}>
+        <p className={styles.kicker}>My review cards</p>
+        {desk.cards.length ? desk.cards.map((card) => <div key={card.code} className={styles.rowLine}><span>{card.business ?? "Not assigned"}<small>{card.code} · {card.taps} taps</small></span><a href={`/cards/${card.code}/sheet`}>Print free sheet</a></div>) : <p className={styles.muted}>The Marketing Executive gives you cards. They show here, ready to print and photocopy.</p>}
       </section>
       <section className={styles.grid}>
         {numbers.map(([label, value, note]) => <div key={label} className={styles.stat}><span>{label}</span><b>{Number(value ?? 0).toLocaleString("en-US")}</b><small>{note}</small></div>)}

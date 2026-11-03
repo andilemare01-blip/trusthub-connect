@@ -1,0 +1,10 @@
+.page { background: #fff; color: #000; font-family: var(--font-geist-sans), system-ui, sans-serif; padding: 12px; }
+.hint { font-size: 14px; }
+.sheet { width: 190mm; max-width: 100%; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; }
+.slip { height: 68mm; box-sizing: border-box; border: 1px dashed #000; padding: 5mm; display: flex; gap: 4mm; align-items: center; break-inside: avoid; }
+.text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2mm; font-size: 11pt; }
+.text b { font-size: 15pt; }
+.text small { font-size: 8pt; }
+.qr { width: 34mm; flex: none; }
+.qr svg { width: 100%; height: auto; display: block; }
+@media print { .hint { display: none; } .page { padding: 0; } @page { size: A4; margin: 10mm; } }

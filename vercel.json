@@ -1,5 +1,6 @@
 {
   "crons": [
-    { "path": "/api/cron/community-missions", "schedule": "0 7 * * *" }
+    { "path": "/api/cron/community-missions", "schedule": "0 7 * * *" },
+    { "path": "/api/cron/business-autoreply", "schedule": "0 16 * * *" }
   ]
 }

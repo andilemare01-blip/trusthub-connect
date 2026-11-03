@@ -3,7 +3,7 @@ import Link from "next/link";
 import styles from "./digital.module.css";
 import { DigitalForm } from "./digital-form";
 import { serverDb, call } from "@/lib/business/server";
-import { whatsappLink } from "@/lib/business/catalog";
+import { offersFor, whatsappLink } from "@/lib/business/catalog";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -57,6 +57,10 @@ export default async function DigitalPage({ searchParams }: { searchParams: Prom
       <section className={styles.section}>
         <h2>How it works</h2>
         <ol className={styles.steps}>{STEPS.map(([title, body]) => <li key={title}><b>{title}</b><span>{body}</span></li>)}</ol>
+      </section>
+      <section className={styles.section}>
+        <h2>And when you&apos;re ready for more</h2>
+        <div className={styles.grid}>{offersFor(null).filter((offer) => offer.key !== "website").map((offer) => <article key={offer.key} className={styles.card}><h3>{offer.name} · from ${offer.from}</h3><p>{offer.helps}</p></article>)}</div>
       </section>
       <section className={styles.chat} id="chat">
         <h2>Talk to us</h2>

@@ -8,7 +8,7 @@ import { PRODUCT_LABEL } from "@/lib/business/catalog";
 type Api = <T>(path: string, init?: RequestInit) => Promise<T>;
 type Claim = { id: string; business: string; city: string | null; listed_phone: string | null; applicant: string; role: string; phone: string; notes: string | null; has_owner: boolean };
 type Pending = { id: string; business: string; product: string; amount: number | null; method: string | null; ref: string | null; agent: string | null };
-type OpenDeal = { id: string; business: string; contact: string | null; phone: string | null; stage: string; quoted: number | null; agent_id: number | null; agent: string | null; last_text: string | null; unread: boolean };
+type OpenDeal = { id: string; business: string; package: string; contact: string | null; phone: string | null; stage: string; quoted: number | null; agent_id: number | null; agent: string | null; last_text: string | null; unread: boolean };
 type AgentRow = { id: number; name: string; code: string; active: boolean };
 type CardRow = { id: string; code: string; agent_id: number | null; business: string | null };
 type Desk = { claims: Claim[]; payments: Pending[]; deals: OpenDeal[]; agents: AgentRow[]; cards: CardRow[]; settings: Record<string, string> };
@@ -86,7 +86,7 @@ function Today({ api, desk, act }: { api: Api; desk: Desk; act: Act }) {
         {desk.deals.length === 0 ? <p className={styles.empty}>No open chats.</p> : desk.deals.map((deal) => (
           <div key={deal.id}>
             <div className={styles.item}>
-              <div className={styles.itemText}><b>{deal.business}</b><span>{[deal.contact, deal.phone, deal.agent ? `Agent: ${deal.agent}` : "No agent yet"].filter(Boolean).join(" · ")}</span><span>{deal.last_text}</span><span className={styles.tags}>{deal.unread ? <span className={styles.tag}>New message</span> : null}<span className={styles.tag}>{deal.stage}</span>{deal.quoted ? <span className={styles.tag}>{usd(deal.quoted)}</span> : null}</span></div>
+              <div className={styles.itemText}><b>{deal.business}</b><span>{[deal.contact, deal.phone, deal.agent ? `Agent: ${deal.agent}` : "No agent yet"].filter(Boolean).join(" · ")}</span><span>{deal.last_text}</span><span className={styles.tags}>{deal.unread ? <span className={styles.tag}>New message</span> : null}<span className={styles.tag}>{deal.package}</span><span className={styles.tag}>{deal.stage}</span>{deal.quoted ? <span className={styles.tag}>{usd(deal.quoted)}</span> : null}</span></div>
               <div className={styles.itemActions}><button type="button" className={styles.primarySmall} onClick={() => setOpen(open === deal.id ? null : deal.id)}>{open === deal.id ? "Close" : "Open chat"}</button></div>
             </div>
             {open === deal.id ? <DealTools api={api} deal={deal} agents={desk.agents} act={act} /> : null}
@@ -114,7 +114,7 @@ function DealTools({ api, deal, agents, act }: { api: Api; deal: OpenDeal; agent
         <label className={styles.field}>Paid ($)<input inputMode="decimal" value={paid.amount} onChange={(event) => setPaid({ ...paid, amount: event.target.value })} /></label>
         <label className={styles.field}>How<select value={paid.method} onChange={(event) => setPaid({ ...paid, method: event.target.value })}>{["EcoCash", "InnBucks", "OneMoney", "Bank transfer", "Cash"].map((method) => <option key={method}>{method}</option>)}</select></label>
         <label className={styles.field}>Reference<input value={paid.ref} onChange={(event) => setPaid({ ...paid, ref: event.target.value })} /></label>
-        <button type="button" className={styles.primarySmall} disabled={!paid.amount} onClick={() => void act<{ commission: number }>({ action: "payment-record", deal: deal.id, product: "website", ...paid }, (result) => `Website sale recorded. Commission: ${usd(result.commission)}.`)}>Record payment</button>
+        <button type="button" className={styles.primarySmall} disabled={!paid.amount} onClick={() => void act<{ commission: number }>({ action: "payment-record", deal: deal.id, product: deal.package === "website" ? "website" : "other", note: deal.package, ...paid }, (result) => `Sale recorded. Commission: ${usd(result.commission)}.`)}>Record payment</button>
       </div>
     </div>
   );
@@ -181,7 +181,7 @@ function RevenueView({ api, desk, act }: { api: Api; desk: Desk; act: Act }) {
         <p className={styles.muted}>For cash or a deal made outside the app.</p>
         <div className={styles.row}>
           <label className={styles.field}>Business<input value={form.business} maxLength={120} onChange={(event) => setForm({ ...form, business: event.target.value })} /></label>
-          <label className={styles.field}>Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })}><option value="website">Website</option><option value="other">Other</option></select></label>
+          <label className={styles.field}>Product<select value={form.product} onChange={(event) => setForm({ ...form, product: event.target.value })}><option value="website">Website</option><option value="other">Other digital product</option></select></label>
           <label className={styles.field}>Amount ($)<input inputMode="decimal" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label>
           <label className={styles.field}>Agent<select value={form.agent} onChange={(event) => setForm({ ...form, agent: event.target.value })}><option value="">No agent</option>{desk.agents.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className={styles.field}>How<input value={form.method} maxLength={40} onChange={(event) => setForm({ ...form, method: event.target.value })} /></label>

@@ -149,7 +149,7 @@ textarea{resize:vertical;min-height:80px}
 
 /* tabs */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:9;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
-.tabs .wrap{display:grid;grid-template-columns:repeat(5,1fr)}
+.tabs .wrap{display:grid;grid-template-columns:repeat(6,1fr);padding-inline:4px}
 .tabs button{background:none;border:0;padding:9px 0 8px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--muted);position:relative}
 .tabs button svg{width:22px;height:22px}
 .tabs button[aria-current="page"]{color:var(--brand)}
@@ -220,9 +220,10 @@ const live = {
   clearRequest(b){ return this.rpc("biz_admin_clear_request", { p_business: b }); },
   context(b){ return server("/api/business/context?business=" + encodeURIComponent(b)); },
   pay(b, product, method, ref){ return server("/api/business/pay", { business: b, product, method, ref }); },
-  openDeal(b, source){ return server("/api/business/deal", { business: b, source }); },
-  benita(b, action, reviewId){ return server("/api/business/benita", { business: b, action, reviewId }); },
+  openDeal(b, source, pack){ return server("/api/business/deal", { business: b, source, package: pack }); },
+  benita(b, action, reviewId, text){ return server("/api/business/benita", { business: b, action, reviewId, text }); },
   referral(claimId, code){ return server("/api/business/referral", { claimId, code }); },
+  setAuto(b, on){ return server("/api/business/ai", { business: b, autoReply: on }); },
   async aiInsight(b){
     const { data, error } = await sb.functions.invoke("biz-ai-insight", { body: { business_id: b } });
     if (error) { let msg = error.message; try { const j = await error.context.json(); msg = j.error || msg; } catch(e){} throw new Error(msg); }
@@ -236,7 +237,7 @@ const now = Date.now(), day = 86400000;
 const iso = d => new Date(now - d).toISOString();
 const sample = {
   biz: { id: "demo-1", name: "Mai Tino's Kitchen", category: "Food & Dining - Restaurant", city: "Harare", area: "Avondale", address: "14 King George Rd, Avondale", phone: "+263 77 123 4567", website: "", description: "Sadza, rice and traditional relish, cooked fresh every day.", opening_hours: "Mon–Sat 7am–8pm", trust_score: 82 },
-  plan: "free", tokens: 12,
+  plan: "free", tokens: 12, ask: [],
   reviews: [
     { id:"r1", rating:5, comment:"Best sadza nehuku in Avondale. Staff are so friendly and the portions are big.", author:"Tatenda M.", created_at: iso(day*2), via_whatsapp:true, reply:null },
     { id:"r2", rating:2, comment:"Food was good but I waited 50 minutes at lunch time. Too slow.", author:"Anonymous", created_at: iso(day*4), via_whatsapp:false, reply:null },
@@ -285,23 +286,24 @@ const wait = (v, ms=180) => new Promise(r => setTimeout(() => r(v), ms));
 const demo = {
   async session(){ return { user: { email: "preview@trusthub" } }; },
   async signOut(){},
-  context(){ return wait({ tokens: sample.tokens, payments: [], openDeal: null, websiteFrom: "30", hasWebsite: false, boughtWebsite: false, whatsapp: null, offer: { key:"site-reviews", title:"7 people have reviewed you. Where do the next ones find you?", body:"Turn those reviews into a website with your own domain, from $30.", action:"deal", cta:"Chat with an agent" } }); },
+  setAuto(){ sample.auto = !sample.auto; return wait({ ok:true }); },
+  async context(){ const offers = (await fetch("/api/business/offers?category=restaurant").then(r => r.json()).catch(() => ({ offers: [] }))).offers; return wait({ offers, ai:{ auto_reply: !!sample.auto, drafts: [], auto_replied: 3, ask: sample.ask }, today:{ take:"Diesel moved from $2.04 to $2.10 a litre. If you deliver or transport stock, check your prices still cover it.", category:"restaurant", city:"Harare", missed: 4, searches:[{ q:"sadza near me", n:21 },{ q:"takeaway", n:17 },{ q:"catering", n:9 }], rates:[{ key:"fx.usd_zwg", label:"Official rate", value:26.56, unit:"ZWG per USD", date:new Date().toISOString().slice(0,10), previous:26.57 },{ key:"fuel.diesel", label:"Diesel", value:2.10, unit:"per litre", date:new Date().toISOString().slice(0,10), previous:2.04 },{ key:"fuel.petrol_blend", label:"Petrol", value:2.05, unit:"per litre", date:new Date().toISOString().slice(0,10), previous:2.05 }], news:[{ title:"Sample headline: new trading rules for small businesses", summary:"In your real feed this shows today's business news, with a link to the publisher.", url:"", source:"Sample", date:new Date().toISOString(), scam:false }] }, tokens: sample.tokens, payments: [], openDeal: null, websiteFrom: "30", hasWebsite: false, boughtWebsite: false, whatsapp: null, offer: { key:"site-reviews", title:"7 people have reviewed you. Where do the next ones find you?", body:"Turn those reviews into a website with your own domain, from $30.", action:"deal", cta:"Chat with an agent" } }); },
   pay(){ return Promise.reject(new Error("This is a sample. Sign in with your own business to pay.")); },
   openDeal(){ return Promise.reject(new Error("This is a sample. Sign in with your own business to chat.")); },
   referral(){ return wait({ ok:true }); },
-  benita(b, action){ if (action === "reply") return wait({ draft:"Thank you for telling us, and we're sorry about this. Please WhatsApp us so we can put it right.", tokens: sample.tokens }); sample.tokens = Math.max(0, sample.tokens - 10); return this.aiInsight().then(summary => ({ report: summary.summary, tokens: sample.tokens })); },
+  benita(b, action, id, text){ if (action === "ask" || action === "market"){ const answer = action === "market" ? "People near you search most for sadza and takeaway, and you're ahead of two of three similar places on portions. Your two best moves: fix the lunch wait and answer your unhappy reviews." : "Your reviews love the food, but lunch waits and an unanswered EcoCash complaint are costing you. Start by replying to that complaint today, then prepare your top three plates before noon."; if (action === "ask") sample.ask.push({ role:"owner", body:text }, { role:"benita", body:answer }); sample.tokens = Math.max(0, sample.tokens - (action === "ask" ? 1 : 3)); return wait({ answer, tokens: sample.tokens }, 700); } if (action === "post"){ sample.tokens = Math.max(0, sample.tokens - 1); return wait({ post:{ title:"Friday lunch is on!", body:"Hot sadza nehuku, ready when you arrive. Come through this Friday." }, tokens: sample.tokens }, 700); } if (action === "reply") return wait({ draft:"Thank you for telling us, and we're sorry about this. Please WhatsApp us so we can put it right.", tokens: sample.tokens }); sample.tokens = Math.max(0, sample.tokens - 10); return this.aiInsight().then(summary => ({ report: summary.summary, tokens: sample.tokens })); },
   myBusinesses(){ const d = sampleDashboard(); return wait({ is_admin:false, businesses:[ { id:"demo-1", name:sample.biz.name, city:sample.biz.city, category:sample.biz.category, plan:sample.plan, reviews_count:d.stats.reviews, avg_rating:d.stats.avg, unanswered:d.stats.unanswered, unread_chats:d.stats.unread_chats } ], claims:[] }); },
   dashboard(){ return wait(sampleDashboard()); },
   find(q){ const pool = [ { id:"f1", name:"Ndlovu Hardware", category:"Hardware", city:"Bulawayo", area:"CBD", reviews_count:4, claimed:false }, { id:"f2", name:"Glow Salon", category:"Beauty", city:"Harare", area:"Borrowdale", reviews_count:11, claimed:true }, { id:"f3", name:"Masvingo Motors", category:"Car dealer", city:"Masvingo", area:"", reviews_count:2, claimed:false } ]; return wait(pool.filter(b => b.name.toLowerCase().includes(q.toLowerCase()))); },
   submitClaim(){ return wait({ status:"submitted" }); },
   reply(id, body){ const r = sample.reviews.find(x=>x.id===id); r.reply = { body, updated_at: new Date().toISOString() }; return wait({}); },
   deleteReply(id){ sample.reviews.find(x=>x.id===id).reply = null; return wait({}); },
-  announce(b, a){ const live = sample.announcements.filter(x=>x.is_active).length; if (sample.plan==="free" && live>=1) return Promise.reject(new Error("The free plan allows one live post. Upgrade to Growth for unlimited posts.")); sample.announcements.unshift({ id:"a"+Date.now(), ...a, is_active:true, views:0, starts_at:new Date().toISOString(), created_at:new Date().toISOString() }); return wait({}); },
-  annSet(id, active, del){ if (del) sample.announcements = sample.announcements.filter(a=>a.id!==id); else { if (active && sample.plan==="free" && sample.announcements.some(a=>a.is_active && a.id!==id)) return Promise.reject(new Error("The free plan allows one live post. Upgrade to Growth for unlimited posts.")); sample.announcements.find(a=>a.id===id).is_active = active; } return wait({}); },
+  announce(b, a){ const live = sample.announcements.filter(x=>x.is_active).length;  sample.announcements.unshift({ id:"a"+Date.now(), ...a, is_active:true, views:0, starts_at:new Date().toISOString(), created_at:new Date().toISOString() }); return wait({}); },
+  annSet(id, active, del){ if (del) sample.announcements = sample.announcements.filter(a=>a.id!==id); else {  sample.announcements.find(a=>a.id===id).is_active = active; } return wait({}); },
   updateProfile(b, f){ Object.assign(sample.biz, f); return wait({}); },
   chatList(){ return wait(sample.chats.map(c => ({ id:c.id, customer:c.customer, last_message_at:c.last_message_at, unread:c.unread, last:c.messages.at(-1).body }))); },
   chatThread(id){ const c = sample.chats.find(x=>x.id===id); c.unread = 0; return wait({ id, customer:c.customer, messages:c.messages }); },
-  chatSend(id, body){ if (sample.plan==="free") return Promise.reject(new Error("Replying to customer chats is part of the Growth plan.")); const c = sample.chats.find(x=>x.id===id); c.messages.push({ from_business:true, body, created_at:new Date().toISOString() }); c.last_message_at = new Date().toISOString(); return wait({}); },
+  chatSend(id, body){ const c = sample.chats.find(x=>x.id===id); c.messages.push({ from_business:true, body, created_at:new Date().toISOString() }); c.last_message_at = new Date().toISOString(); return wait({}); },
   requestPlan(b, plan, method, ref){ sample.sub = { plan: sample.plan, status:"active", requested_plan: plan, requested_at: new Date().toISOString() }; sample.requests.push({ business_id:"demo-1", business:sample.biz.name, current:sample.plan, requested:plan, method, ref, requested_at:new Date().toISOString() }); return wait({}); },
   adminDesk(){ return wait({ claims: sample.claims, plan_requests: sample.requests, totals:{ owners: 1, growth: sample.plan==="growth"?1:0, pro: sample.plan==="pro"?1:0, mrr: sample.plan==="growth"?30:sample.plan==="pro"?60:0 } }); },
   decideClaim(id, status){ sample.claims = sample.claims.filter(c=>c.id!==id || !["verified","rejected"].includes(status)); const c = sample.claims.find(x=>x.id===id); if (c) c.status = status; return wait({}); },
@@ -355,6 +357,8 @@ async function refresh(){ try { await loadDash(); render(); } catch(e){ toast(e.
 
 /* ---------- icons ---------- */
 const I = {
+  today:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M8 3v4M16 3v4M8 14h8"/></svg>',
+  benita:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>',
   home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z"/></svg>',
   star:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.2 1.1 6.1L12 16.8l-5.4 2.9 1.1-6.1L3.2 9.4l6.1-.8z"/></svg>',
   chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4z"/></svg>',
@@ -393,12 +397,12 @@ function render(){
   const d = S.d, b = d?.business;
   const plan = d?.plan || "free";
   const unread = d?.stats?.unread_chats || 0;
-  const tabs = [["home","Home",I.home],["reviews","Reviews",I.star],["chats","Chats",I.chat],["grow","Grow",I.grow],["more","More",I.more]];
+  const tabs = [["home","Home",I.home],["today","Today",I.today],["reviews","Reviews",I.star],["chats","Chats",I.chat],["benita","Benita",I.benita],["grow","Grow",I.grow]];
   $("#app").innerHTML = `
     <header class="top"><div class="wrap">
       ${MARK}
       <button class="biz" id="switch" aria-label="Switch business"><b>${b ? esc(b.name) : "Trusthub for Business"}</b><span>${b ? esc([b.area,b.city].filter(Boolean).join(", ")) + " ▾" : "Claim your business to start"}</span></button>
-      ${b ? `<button class="plan-chip ${plan}" id="planChip">${plan}</button>` : ""}
+      ${b ? `<button class="plan-chip growth" id="planChip">${S.x?.tokens ?? 0} tokens</button><button class="plan-chip" id="moreBtn" aria-label="More">•••</button>` : ""}
     </div></header>
     ${S.mode==="demo" ? `<div class="demo-band"><div class="wrap"><b>Preview with sample data.</b> <span>Mai Tino's Kitchen is an example of what your business will see. <a href="/business">Sign in to start</a></span></div></div>` : ""}
     <main><div class="wrap" id="view"></div></main>
@@ -406,9 +410,10 @@ function render(){
   document.querySelectorAll("[data-tab]").forEach(x => x.onclick = () => { S.tab = x.dataset.tab; S.chatOpen = null; render(); window.scrollTo(0,0); });
   $("#switch").onclick = openSwitcher;
   if ($("#planChip")) $("#planChip").onclick = () => { S.tab = "plan"; render(); };
+  if ($("#moreBtn")) $("#moreBtn").onclick = () => { S.tab = "more"; render(); };
   const v = $("#view");
   if (!b || S.tab === "claim") return viewClaim(v);
-  ({ home: viewHome, reviews: viewReviews, chats: viewChats, grow: viewGrow, more: viewMore, plan: viewPlan, page: viewPage }[S.tab] || viewHome)(v);
+  ({ home: viewHome, today: viewToday, benita: viewBenita, reviews: viewReviews, chats: viewChats, grow: viewGrow, more: viewMore, plan: viewPlan, page: viewPage }[S.tab] || viewHome)(v);
 }
 
 function sheet(html, bind){
@@ -434,11 +439,11 @@ function viewHome(v){
   if (st.unanswered) todo.push(["bad", `Reply to ${st.unanswered} review${st.unanswered>1?"s":""}`, "Owners who reply get trusted faster. Unhappy customers first.", "reviews"]);
   if (st.unread_chats) todo.push(["warn", `${st.unread_chats} customer message${st.unread_chats>1?"s":""} waiting`, "Someone is ready to buy. Answer while they're still looking.", "chats"]);
   const worst = d.auto_insight.themes.find(t => t.complaints > t.praise);
-  if (worst) todo.push(["warn", `Customers mention: ${worst.label.toLowerCase()}`, worst.fix, "grow"]);
+  if (worst) todo.push(["warn", `Customers mention: ${worst.label.toLowerCase()}`, worst.fix, "benita"]);
   if (d.scam_watch.reports) todo.push(["bad", `Your number was reported ${d.scam_watch.reports}×`, "Someone flagged your phone number on Trusthub Connect. Contact us to clear it.", "more"]);
   if (!st.live_announcements) todo.push(["seal", "Post a special", "Live specials show on your Trusthub page and bring people in.", "grow"]);
   if (!d.business.phone || !d.business.description) todo.push(["", "Finish your page", "Add your phone, hours and a short description.", "page"]);
-  if (d.demand.searches_30) todo.push(["seal", `${d.demand.searches_30} people searched for ${esc(d.demand.category)} near you`, "That was in the last 30 days on Trusthub Connect. Make sure they find you.", "grow"]);
+  if (d.demand.searches_30) todo.push(["seal", `${d.demand.searches_30} people searched for ${esc(d.demand.category)} near you`, "That was in the last 30 days on Trusthub Connect. Make sure they find you.", "today"]);
   v.innerHTML = `
     ${offerCard()}
     <section class="panel"><div class="score">
@@ -477,11 +482,11 @@ function bindOffer(v){
     const a = e.target.dataset.offerGo;
     if (a === "deal") return packageSheet("home");
     if (a === "chat") return void (location.href = S.x.openDeal);
-    S.tab = a === "reviews" ? "reviews" : a === "tokens" ? "plan" : "grow"; render(); window.scrollTo(0,0);
+    S.tab = a === "reviews" ? "reviews" : a === "tokens" ? "plan" : "benita"; render(); window.scrollTo(0,0);
   });
 }
-async function openChat(source){
-  try { const r = await S.api.openDeal(S.bizId, source); location.href = r.url; } catch(x){ toast(x.message); }
+async function openChat(source, pack){
+  try { const r = await S.api.openDeal(S.bizId, source, pack); location.href = r.url; } catch(x){ toast(x.message); }
 }
 /* What a website does for them, then one clear next step: talk to a person. */
 function packageSheet(source){
@@ -500,7 +505,7 @@ const TEMPLATES = {
   bad: ["We're sorry about this. Please WhatsApp us so we can make it right.", "Thank you for telling us. We've spoken to the team and fixed this."]
 };
 function viewReviews(v){
-  const all = S.d.reviews;
+  const all = S.d.reviews, drafts = S.x?.ai?.drafts || [];
   const f = S.filter;
   const list = all.filter(r => f==="all" || (f==="unanswered" && !r.reply) || (f==="low" && r.rating<=3) || (f==="replied" && r.reply));
   const count = k => all.filter(r => k==="all" || (k==="unanswered" && !r.reply) || (k==="low" && r.rating<=3) || (k==="replied" && r.reply)).length;
@@ -511,6 +516,7 @@ function viewReviews(v){
         <div class="spread"><span class="stars" aria-label="${r.rating} stars">${stars(r.rating)}</span><span class="muted" style="font-size:12px">${ago(r.created_at)}</span></div>
         <div class="row" style="gap:6px"><b style="font-size:14px">${esc(r.author)}</b>${r.via_whatsapp?'<span class="tag">via WhatsApp</span>':""}${r.rating<=2?'<span class="tag bad">Unhappy</span>':""}</div>
         <div>${esc(r.comment || "(No comment, rating only)")}</div>
+        ${drafts.find(x => x.review_id === r.id && x.flagged) ? '<div class="lock" style="background:var(--bad-soft)"><span><b>Benita left this one for you.</b> It mentions money or safety, so a real person should answer.</span></div>' : ""}
         ${r.reply ? `<div class="reply"><span class="eyebrow">Your reply</span><div>${esc(r.reply.body)}</div><div class="row" style="margin-top:6px"><button class="link" data-edit>Edit</button><button class="link" style="color:var(--bad)" data-del>Remove</button></div></div>`
         : `<div class="stack" data-box hidden><textarea id="reply-${r.id}" placeholder="Write a public reply…"></textarea><div class="chips">${TEMPLATES[r.rating>=4?"good":"bad"].map(t => `<button type="button" data-t="${esc(t)}">${esc(t.slice(0,34))}…</button>`).join("")}</div><div class="row"><button class="btn sm" data-send>Post reply</button><button class="btn ghost sm" data-draft>Draft with Benita · 1 token</button><button class="btn ghost sm" data-cancel>Cancel</button></div></div>
            <div><button class="btn ghost sm" data-open>Reply</button></div>`}
@@ -520,6 +526,8 @@ function viewReviews(v){
   v.querySelectorAll(".review").forEach(el => {
     const id = el.dataset.id, r = all.find(x => x.id === id);
     const box = el.querySelector("[data-box]"), open = el.querySelector("[data-open]");
+    const waiting = drafts.find(x => x.review_id === id && x.body);
+    if (open && waiting){ box.querySelector("textarea").value = waiting.body; open.textContent = "Review Benita's draft"; }
     if (open) open.onclick = () => { box.hidden = false; open.parentElement.hidden = true; box.querySelector("textarea").focus(); };
     el.querySelector("[data-cancel]")?.addEventListener("click", () => { box.hidden = true; open.parentElement.hidden = false; });
     el.querySelectorAll("[data-t]").forEach(c => c.onclick = () => { box.querySelector("textarea").value = c.dataset.t; });
@@ -539,7 +547,7 @@ function viewReviews(v){
 /* ---------- CHATS ---------- */
 let chatSub = null;
 async function viewChats(v){
-  const free = S.d.plan === "free";
+  const free = false;
   if (S.chatOpen){
     v.innerHTML = `<section class="panel"><p class="muted">Loading…</p></section>`;
     let t; try { t = await S.api.chatThread(S.chatOpen); } catch(e){ v.innerHTML = `<section class="panel">${esc(e.message)}</section>`; return; }
@@ -569,10 +577,77 @@ async function viewChats(v){
 /* ---------- GROW: posts + insights ---------- */
 const KINDS = { announcement: "Announcement", special: "Special offer", event: "Event", closed: "Closed notice" };
 function viewGrow(v){
-  const d = S.d, plan = d.plan, pro = plan === "pro";
-  const ai = d.ai_insight, auto = d.auto_insight;
-  const sum = ai?.summary;
+  const d = S.d;
   v.innerHTML = `
+    <div class="spread"><div><span class="eyebrow">Grow your business</span><h2 style="margin-top:4px">What we can build for ${esc(d.business.name)}</h2></div></div>
+    ${(S.x?.offers||[]).map((o,i) => `<section class="panel stack"><div class="spread"><span class="eyebrow">${esc(o.name)}</span><span class="tag good">from $${o.from}</span></div><h2>${esc(o.hook)}</h2><p class="muted" style="margin:0;font-size:14px">${esc(o.helps)}</p><div class="row"><button class="btn sm seal" data-want="${esc(o.name)}">Chat with an agent</button><button class="btn sm ghost" data-ask="${i}">Ask Benita how it helps me · 1 token</button></div></section>`).join("")}
+    <section class="panel stack"><div class="spread"><h2>Posts & specials</h2><button class="btn sm" id="newPost">New post</button></div>
+      <div>${d.announcements.map(a => { const live = a.is_active && (!a.ends_at || new Date(a.ends_at) > new Date()); return `<div class="review" data-ann="${a.id}">
+        <div class="spread"><span class="tag ${live?"good":""}">${live?"Live":"Off"} · ${KINDS[a.kind]||a.kind}</span><span class="muted num" style="font-size:12px">${a.views} views</span></div>
+        <b>${esc(a.title)}</b>${a.body?`<div class="muted" style="font-size:14px">${esc(a.body)}</div>`:""}
+        <div class="muted" style="font-size:12px">${a.ends_at ? "Ends " + new Date(a.ends_at).toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "No end date"}</div>
+        <div class="row"><button class="btn ghost sm" data-toggle="${live?0:1}">${live?"Turn off":"Turn on"}</button><button class="link" style="color:var(--bad)" data-remove>Delete</button></div></div>`; }).join("") || '<p class="muted">No posts yet. A special offer is the quickest way to get people through the door.</p>'}</div>
+    </section>`;
+  v.querySelectorAll("[data-want]").forEach(x => x.onclick = () => openChat("grow", x.dataset.want));
+  v.querySelectorAll("[data-ask]").forEach(x => x.onclick = () => { S.draftAsk = S.x.offers[+x.dataset.ask].question; S.tab = "benita"; render(); window.scrollTo(0,0); });
+  v.querySelectorAll("[data-up]").forEach(x => x.onclick = () => { S.tab = "plan"; render(); });
+  $("#newPost").onclick = () => postSheet();
+  function postSheet(title, body){ sheet(`<h2>New post</h2>
+    <label>Type<select id="pKind">${Object.entries(KINDS).map(([k,l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+    <label>Headline<input id="pTitle" maxlength="120" value="${esc(title||"")}" placeholder="e.g. Free drink with any plate this Friday"></label>
+    <label>Details<textarea id="pBody" maxlength="1500" placeholder="Where, when, any conditions">${esc(body||"")}</textarea></label>
+    <label>Ends on (optional)<input id="pEnds" type="date"></label>
+    <div class="row"><button class="btn" data-post>Publish</button><button class="btn ghost" data-write>Write it with Benita · 1 token</button><button class="btn ghost" data-close>Cancel</button></div>`, s => {
+      s.querySelector("[data-close]").onclick = () => s.remove();
+      s.querySelector("[data-write]").onclick = async e => { const idea = (s.querySelector("#pTitle").value + " " + s.querySelector("#pBody").value).trim(); if (idea.length < 3) return toast("Tell Benita your idea in the headline first."); e.target.disabled = true; e.target.textContent = "Benita is writing…"; try { const r = await S.api.benita(S.bizId, "post", null, idea); s.querySelector("#pTitle").value = r.post.title; s.querySelector("#pBody").value = r.post.body; S.x.tokens = r.tokens; e.target.textContent = "Write it again · 1 token"; } catch(x){ toast(x.message); e.target.textContent = "Write it with Benita · 1 token"; } e.target.disabled = false; };
+      s.querySelector("[data-post]").onclick = async () => {
+        const title = s.querySelector("#pTitle").value.trim(); if (!title) return toast("Add a headline.");
+        const ends = s.querySelector("#pEnds").value;
+        try { await S.api.announce(S.bizId, { kind: s.querySelector("#pKind").value, title, body: s.querySelector("#pBody").value.trim(), ends_at: ends ? new Date(ends + "T23:59:00").toISOString() : null }); s.remove(); toast("Published"); await refresh(); } catch(x){ toast(x.message); }
+      };
+  }); }
+  v.querySelectorAll("[data-ann]").forEach(el => {
+    const id = el.dataset.ann;
+    el.querySelector("[data-toggle]").onclick = async e => { try { await S.api.annSet(id, e.target.dataset.toggle === "1"); await refresh(); } catch(x){ toast(x.message); } };
+    el.querySelector("[data-remove]").onclick = () => sheet(`<h2>Delete this post?</h2><p class="muted" style="margin:0">It disappears from your Trusthub page.</p><div class="row"><button class="btn danger" data-yes>Delete</button><button class="btn ghost" data-close>Keep</button></div>`, s => {
+      s.querySelector("[data-close]").onclick = () => s.remove();
+      s.querySelector("[data-yes]").onclick = async () => { try { await S.api.annSet(id, false, true); s.remove(); toast("Deleted"); await refresh(); } catch(x){ toast(x.message); } };
+    });
+  });
+}
+
+/* ---------- TODAY: free, and worth opening every day ---------- */
+function viewToday(v){
+  const t = S.x?.today;
+  if (!t){ v.innerHTML = '<section class="panel"><p class="muted">Today\'s feed is on its way.</p></section>'; return; }
+  const name = { "fx.usd_zwg":"ZiG per US$", "fuel.diesel":"Diesel", "fuel.petrol_blend":"Petrol" };
+  const date = d => new Date(d).toLocaleDateString(undefined,{day:"numeric",month:"short"});
+  v.innerHTML = `
+    <section class="panel ai stack"><span class="eyebrow">Benita's take · ${date(new Date())}</span><p style="margin:0;font-size:16px;font-weight:600">${esc(t.take)}</p><div><button class="btn ghost sm" data-take>What does this mean for me? · 1 token</button></div></section>
+    <section class="kpis" style="grid-template-columns:repeat(3,1fr)">${t.rates.map(r => { const up = r.previous && r.value > r.previous, down = r.previous && r.value < r.previous; return `<div class="kpi"><b>${r.key.startsWith("fuel") ? "$" + Number(r.value).toFixed(2) : esc(r.value)}</b><span>${esc(name[r.key]||r.label)} ${up?"▲":down?"▼":""}<br>${date(r.date)}</span></div>`; }).join("")}</section>
+    ${t.missed ? `<section class="panel stack"><span class="eyebrow">Missed customers</span><h2>${t.missed} ${t.missed===1?"search":"searches"} for ${esc(t.category||"your trade")} found nothing</h2><p class="muted" style="margin:0;font-size:14px">People were looking on TrustHub in the last 30 days. Complete your page so the next one finds you.</p><div><button class="btn sm" data-page>Finish my page</button></div></section>` : ""}
+    <section class="panel"><span class="eyebrow">What people search for near you</span>${t.searches.length ? t.searches.map(x => `<div class="result"><span>${esc(x.q)}</span><b class="num">${x.n}</b></div>`).join("") : '<p class="muted" style="margin:6px 0 0;font-size:14px">No matching searches this month yet.</p>'}</section>
+    <section class="panel"><h2>Business news</h2>${t.news.map(n => `<article class="review">${n.scam?'<span class="tag bad" style="align-self:flex-start">Scam alert</span>':""}<b>${n.url?`<a href="${esc(n.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(n.title)}</a>`:esc(n.title)}</b><span class="muted" style="font-size:14px">${esc(n.summary)}</span><span class="muted" style="font-size:12px">${esc(n.source)} · ${n.date?date(n.date):""}</span></article>`).join("") || '<p class="muted">No news yet today.</p>'}</section>
+    <p class="muted" style="margin:0;font-size:12px">Rates are official published figures. Headlines link to the publisher.</p>`;
+  v.querySelector("[data-take]").onclick = () => { S.draftAsk = "What does today's news and these rates mean for my business? " + t.take; S.tab = "benita"; render(); window.scrollTo(0,0); };
+  v.querySelector("[data-page]")?.addEventListener("click", () => { S.tab = "page"; render(); });
+}
+
+/* ---------- BENITA: a business advisor that knows this business's own numbers ---------- */
+function viewBenita(v){
+  const d = S.d, ai = d.ai_insight, auto = d.auto_insight, sum = ai?.summary, x = S.x || {}, chat = x.ai?.ask || [], on = !!x.ai?.auto_reply;
+  const starters = ["What should I fix first?", "Why are customers unhappy?", "How can I get more reviews?", "What should I post this week?"];
+  v.innerHTML = `
+    <section class="panel stack"><div class="spread"><div><span class="eyebrow">Ask Benita</span><h2 style="margin-top:4px">Your business advisor</h2></div><span class="tag good">1 token a question</span></div>
+      <p class="muted" style="margin:0;font-size:14px">She has read your reviews, your page, what people search for nearby, and today's news.</p>
+      <div class="thread" id="askThread">${chat.map(m => `<div class="msg ${m.role==="owner"?"me":""}">${esc(m.body)}</div>`).join("")}</div>
+      ${chat.length ? "" : `<div class="chips">${starters.map(q => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>`}
+      <div class="row" style="flex-wrap:nowrap"><textarea id="askBox" rows="2" maxlength="800" style="min-height:0" placeholder="Ask anything about your business…">${esc(S.draftAsk||"")}</textarea><button class="btn" id="askGo">Ask</button></div>
+    </section>
+    <section class="panel stack"><div class="spread"><div><span class="eyebrow">Auto-reply</span><h2 style="margin-top:4px">Let Benita answer your reviews</h2></div><button class="btn sm ${on?"ghost":"seal"}" id="autoBtn">${on?"Turn off":"Turn on"}</button></div>
+      <p class="muted" style="margin:0;font-size:14px">${on ? `On. Benita has replied ${x.ai?.auto_replied||0} times. She checks new reviews once a day.` : "Benita checks new reviews once a day."} 4 and 5 star reviews get a reply automatically. Anything lower gets a draft for you to approve. Complaints about money or safety always come to you. Each reply costs 1 token, and she stops when your tokens run out.</p>
+    </section>
+    <section class="panel stack"><div class="spread"><div><span class="eyebrow">Market check</span><h2 style="margin-top:4px">How do you compare nearby?</h2></div><button class="btn sm" id="marketBtn">Check · 3 tokens</button></div><div id="marketOut" class="muted" style="font-size:14px;white-space:pre-wrap">What people are searching for, how you compare with similar businesses, and your two best moves.</div></section>
     <section class="panel ai stack">
       <div class="spread"><div><span class="eyebrow">Benita Intelligence</span><h2 style="margin-top:4px">${sum ? "Your business report" : "Tips made for your business"}</h2></div>
         <button class="btn sm seal" id="aiBtn">${sum ? "New report" : "Get my report"} · 10 tokens</button></div>
@@ -593,57 +668,27 @@ function viewGrow(v){
 
     <section class="panel"><div class="spread"><h2>Themes in your reviews</h2><span class="eyebrow">free, updates live</span></div>
       <div style="margin-top:8px">${auto.themes.map(t => { const tot = t.praise + t.complaints; return `<div class="theme"><b>${esc(t.label)}</b><span class="num muted" style="font-size:13px">${t.praise} 👍 · ${t.complaints} 👎</span><div class="split"><span class="p" style="width:${t.praise/tot*100}%"></span><span class="n" style="width:${t.complaints/tot*100}%"></span></div>${t.complaints>t.praise?`<p>${esc(t.fix)}</p>`:""}</div>`; }).join("") || '<p class="muted">Not enough review text yet to spot themes.</p>'}</div>
-    </section>
-
-    <section class="panel stack"><div class="spread"><h2>Posts & specials</h2><button class="btn sm" id="newPost">New post</button></div>
-      ${plan==="free" ? `<p class="muted" style="margin:0;font-size:13px">Free plan: one live post at a time. Growth and Pro: unlimited.</p>` : ""}
-      <div>${d.announcements.map(a => { const live = a.is_active && (!a.ends_at || new Date(a.ends_at) > new Date()); return `<div class="review" data-ann="${a.id}">
-        <div class="spread"><span class="tag ${live?"good":""}">${live?"Live":"Off"} · ${KINDS[a.kind]||a.kind}</span><span class="muted num" style="font-size:12px">${a.views} views</span></div>
-        <b>${esc(a.title)}</b>${a.body?`<div class="muted" style="font-size:14px">${esc(a.body)}</div>`:""}
-        <div class="muted" style="font-size:12px">${a.ends_at ? "Ends " + new Date(a.ends_at).toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "No end date"}</div>
-        <div class="row"><button class="btn ghost sm" data-toggle="${live?0:1}">${live?"Turn off":"Turn on"}</button><button class="link" style="color:var(--bad)" data-remove>Delete</button></div></div>`; }).join("") || '<p class="muted">No posts yet. A special offer is the quickest way to get people through the door.</p>'}</div>
-    </section>
-
-    <section class="panel stack"><div class="spread"><div><span class="eyebrow">Demand near you</span><h2 style="margin-top:4px"><span class="num">${d.demand.searches_30}</span> searches for ${esc(d.demand.category || "your category")} in 30 days</h2></div></div>
-      ${pro && d.demand.top ? `<div>${d.demand.top.map(x => `<div class="result"><span>${esc(x.q)} <span class="muted">· ${esc(x.city)}</span></span><b class="num">${x.n}</b></div>`).join("") || '<p class="muted">No searches matched yet.</p>'}</div>`
-       : `<div class="blur" aria-hidden="true"><div class="result"><span>sadza near me · Harare</span><b>21</b></div><div class="result"><span>takeaway · Harare</span><b>17</b></div></div><div class="lock"><span><b>Pro</b> shows exactly what people searched for on Trusthub Connect, and how you compare with similar businesses nearby.</span><button class="btn seal sm" data-up>See Pro</button></div>`}
-      ${pro && d.competitors ? `<div><span class="eyebrow">Similar businesses in ${esc(d.business.city||"your city")}</span>${d.competitors.map(c => `<div class="result"><span>${esc(c.name)}</span><span class="num muted">${c.avg}★ · ${c.reviews}</span></div>`).join("") || '<p class="muted">No rated competitors yet.</p>'}</div>` : ""}
     </section>`;
+  S.draftAsk = "";
+  const thread = v.querySelector("#askThread"); thread.scrollTop = thread.scrollHeight;
+  const ask = async q => { if (q.trim().length < 2) return toast("Type your question first."); if ((S.x?.tokens ?? 0) < 1){ S.tab = "plan"; render(); return toast("You're out of tokens."); } const go = v.querySelector("#askGo"); go.disabled = true; go.textContent = "…"; thread.insertAdjacentHTML("beforeend", `<div class="msg me">${esc(q)}</div><div class="msg" id="askWait">Benita is thinking…</div>`); thread.scrollTop = thread.scrollHeight; try { const r = await S.api.benita(S.bizId, "ask", null, q); await refresh(); toast(r.tokens + " tokens left"); } catch(x){ toast(x.message); go.disabled = false; go.textContent = "Ask"; v.querySelector("#askWait")?.remove(); } };
+  v.querySelector("#askGo").onclick = () => ask(v.querySelector("#askBox").value);
+  v.querySelectorAll("[data-q]").forEach(c => c.onclick = () => ask(c.dataset.q));
+  v.querySelector("#autoBtn").onclick = async () => { try { await S.api.setAuto(S.bizId, !on); toast(on ? "Auto-reply is off" : "Auto-reply is on"); await refresh(); } catch(x){ toast(x.message); } };
+  v.querySelector("#marketBtn").onclick = async e => { if ((S.x?.tokens ?? 0) < 3){ S.tab = "plan"; render(); return toast("You need 3 tokens."); } e.target.disabled = true; e.target.textContent = "Checking…"; try { const r = await S.api.benita(S.bizId, "market"); v.querySelector("#marketOut").textContent = r.answer; v.querySelector("#marketOut").classList.remove("muted"); S.x.tokens = r.tokens; e.target.textContent = "Check again · 3 tokens"; } catch(x){ toast(x.message); e.target.textContent = "Check · 3 tokens"; } e.target.disabled = false; };
   $("#buyTokens").onclick = () => { S.tab = "plan"; render(); };
   $("#aiBtn").onclick = async e => {
     if ((S.x?.tokens ?? 0) < 10){ S.tab = "plan"; render(); return toast("You need 10 tokens for a report."); }
     e.target.disabled = true; e.target.textContent = "Benita is reading…";
     try { const r = await S.api.benita(S.bizId, "report"); toast("Your report is ready"); if (S.mode === "demo") S.x.tokens = r.tokens; await refresh(); } catch(x){ toast(x.message); e.target.disabled = false; e.target.textContent = "Try again"; }
   };
-  v.querySelectorAll("[data-up]").forEach(x => x.onclick = () => { S.tab = "plan"; render(); });
-  $("#newPost").onclick = () => sheet(`<h2>New post</h2>
-    <label>Type<select id="pKind">${Object.entries(KINDS).map(([k,l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
-    <label>Headline<input id="pTitle" maxlength="120" placeholder="e.g. Free drink with any plate this Friday"></label>
-    <label>Details<textarea id="pBody" maxlength="1500" placeholder="Where, when, any conditions"></textarea></label>
-    <label>Ends on (optional)<input id="pEnds" type="date"></label>
-    <div class="row"><button class="btn" data-post>Publish</button><button class="btn ghost" data-close>Cancel</button></div>`, s => {
-      s.querySelector("[data-close]").onclick = () => s.remove();
-      s.querySelector("[data-post]").onclick = async () => {
-        const title = s.querySelector("#pTitle").value.trim(); if (!title) return toast("Add a headline.");
-        const ends = s.querySelector("#pEnds").value;
-        try { await S.api.announce(S.bizId, { kind: s.querySelector("#pKind").value, title, body: s.querySelector("#pBody").value.trim(), ends_at: ends ? new Date(ends + "T23:59:00").toISOString() : null }); s.remove(); toast("Published"); await refresh(); } catch(x){ toast(x.message); }
-      };
-  });
-  v.querySelectorAll("[data-ann]").forEach(el => {
-    const id = el.dataset.ann;
-    el.querySelector("[data-toggle]").onclick = async e => { try { await S.api.annSet(id, e.target.dataset.toggle === "1"); await refresh(); } catch(x){ toast(x.message); } };
-    el.querySelector("[data-remove]").onclick = () => sheet(`<h2>Delete this post?</h2><p class="muted" style="margin:0">It disappears from your Trusthub page.</p><div class="row"><button class="btn danger" data-yes>Delete</button><button class="btn ghost" data-close>Keep</button></div>`, s => {
-      s.querySelector("[data-close]").onclick = () => s.remove();
-      s.querySelector("[data-yes]").onclick = async () => { try { await S.api.annSet(id, false, true); s.remove(); toast("Deleted"); await refresh(); } catch(x){ toast(x.message); } };
-    });
-  });
 }
 
 /* ---------- MORE ---------- */
 function viewMore(v){
   const admin = S.list?.is_admin;
   v.innerHTML = `<section class="panel"><div>
-    ${[["page","Page details","Phone, hours, address and description"],["plan","Plan & billing",`You're on ${S.d.plan}`],["claim","Claim another business","Add a branch or a second business"]].map(([k,t,p]) => `<div class="todo"><span class="dot ${k==="admin"?"seal":""}"></span><div><b>${t}</b><p>${p}</p></div><button class="btn ghost sm" data-go="${k}">Open</button></div>`).join("")}
+    ${[["page","Page details","Phone, hours, address and description"],["plan","Tokens & payments",`You have ${S.x?.tokens ?? 0} tokens`],["claim","Claim another business","Add a branch or a second business"]].map(([k,t,p]) => `<div class="todo"><span class="dot ${k==="admin"?"seal":""}"></span><div><b>${t}</b><p>${p}</p></div><button class="btn ghost sm" data-go="${k}">Open</button></div>`).join("")}
   </div></section>
   <section class="panel stack"><span class="eyebrow">The Digital Package</span><h2>${S.x?.boughtWebsite || S.x?.hasWebsite ? "Your website" : `A fresh website, from $${esc(S.x?.websiteFrom || "30")}`}</h2><p class="muted" style="margin:0;font-size:14px">Your own domain, one tap to WhatsApp, and your reviews on show.</p><div><button class="btn sm seal" id="pkg">See what's included</button></div></section>
   ${admin ? `<section class="panel spread"><span>CEO desk</span><a class="btn ghost sm" href="/admin" style="text-decoration:none">Open</a></section>` : ""}
@@ -668,30 +713,18 @@ function viewPage(v){
 }
 
 /* ---------- PLANS ---------- */
-const PACKS = [ { k:"tokens_small", name:"50 tokens", price:5, note:"5 reports, or 50 reply drafts" }, { k:"tokens_large", name:"200 tokens", price:15, note:"20 reports, or 200 reply drafts" } ];
+const PACKS = [ { k:"tokens_small", name:"50 tokens", price:5, note:"For example: 20 review replies, 20 questions and a report" }, { k:"tokens_large", name:"200 tokens", price:15, note:"Best value, for busy businesses" } ];
 const STATUS = { pending:"Being checked", confirmed:"Confirmed", rejected:"Not received" };
 const PRODUCT = { website:"Website", tokens_small:"50 tokens", tokens_large:"200 tokens", growth:"Growth", pro:"Pro", other:"Other" };
-const PLANS = [
-  { k:"free", name:"Free", price:0, items:["Claim and verify your page","See every review, app and WhatsApp","Reply to reviews publicly","Free theme insights","12 Benita tokens to start","1 live post at a time","Read customer messages"] },
-  { k:"growth", name:"Growth", price:30, items:["Everything in Free","Reply to customer chats","Unlimited posts, specials and events","10 Benita tokens every month","Verified-business badge","Tap-and-review counter card"] },
-  { k:"pro", name:"Pro", price:60, items:["Everything in Growth","40 Benita tokens every month","What people search for near you","Compare with similar businesses","Scam watch alerts on your number","Priority support from Trusthub"] }
-];
+const PLANS = [];
 function viewPlan(v){
-  const d = S.d, cur = d.plan, sub = d.subscription || {};
   v.innerHTML = `
-    ${sub.requested_plan ? `<div class="lock"><span>Your request for <b>${esc(sub.requested_plan)}</b> is being checked. We'll switch it on once the payment is confirmed.</span></div>` : ""}
-    ${cur!=="free" && sub.current_period_end ? `<div class="lock" style="background:var(--brand-soft)"><span><b>${esc(cur[0].toUpperCase()+cur.slice(1))}</b> is active until ${new Date(sub.current_period_end).toLocaleDateString(undefined,{day:"numeric",month:"long",year:"numeric"})}.</span></div>` : ""}
-    <div class="plans">${PLANS.map(p => `<div class="plan ${p.k===cur?"current":""}">
-      <div class="spread"><h3>${p.name}</h3>${p.k===cur?'<span class="tag good">Current</span>':""}</div>
-      <div class="price">${p.price ? "$"+p.price : "Free"}${p.price?" <small>/ month</small>":""}</div>
-      <ul>${p.items.map(i=>`<li>${i}</li>`).join("")}</ul>
-      ${p.k!=="free" && p.k!==cur ? `<button class="btn ${p.k==="pro"?"seal":""}" data-buy="${p.k}">Choose ${p.name}</button>` : ""}
-    </div>`).join("")}</div>
+    <section class="panel stack"><span class="eyebrow">How TrustHub works</span><h2>Free to use. Tokens when Benita does the work.</h2><p class="muted" style="margin:0;font-size:14px">Reviews, replies, customer chats, posts and your daily feed are always free when you do them yourself.</p></section>
     <section class="panel stack"><div class="spread"><div><span class="eyebrow">Benita tokens</span><h2 style="margin-top:4px">You have <span class="num">${S.x?.tokens ?? 0}</span> tokens</h2></div></div>
-      <p class="muted" style="margin:0;font-size:14px">A full report costs 10 tokens and a reply draft costs 1. Tokens never expire.</p>
+      <div>${[["Ask Benita a question","1"],["Reply to a review","1"],["Write a post","1"],["Market check","3"],["Full report with a proposed menu or offers","10"]].map(([a,b]) => `<div class="result"><span>${a}</span><b class="num">${b}</b></div>`).join("")}</div><p class="muted" style="margin:0;font-size:14px">Tokens never expire.</p>
       ${PACKS.map(p => `<div class="result"><div><b>${p.name} · $${p.price}</b><div class="muted" style="font-size:13px">${p.note}</div></div><button class="btn sm" data-buy="${p.k}">Buy</button></div>`).join("")}</section>
     ${(S.x?.payments||[]).length ? `<section class="panel"><h2>Your payments</h2>${S.x.payments.map(p => `<div class="result"><div><b>${esc(PRODUCT[p.product]||p.product)}</b><div class="muted" style="font-size:13px">${ago(p.created_at)}</div></div><span>${p.amount ? "$"+esc(p.amount) : ""} · ${esc(STATUS[p.status]||p.status)}</span></div>`).join("")}</section>` : ""}
-    <section class="panel"><h2>How paying works</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Pay with EcoCash, InnBucks, OneMoney, bank transfer or cash at a Trusthub agent. Enter your payment reference here and the Trusthub team switches your plan on, usually the same day.</p></section>`;
+    <section class="panel"><h2>How paying works</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Pay with EcoCash, InnBucks, OneMoney, bank transfer or cash at a Trusthub agent. Enter your payment reference here and we add your tokens, usually the same day.</p></section>`;
   v.querySelectorAll("[data-buy]").forEach(x => x.onclick = () => {
     const p = PLANS.find(z => z.k === x.dataset.buy) || PACKS.find(z => z.k === x.dataset.buy), monthly = !!PLANS.find(z => z.k === x.dataset.buy);
     const site = !S.x?.hasWebsite && !S.x?.boughtWebsite;

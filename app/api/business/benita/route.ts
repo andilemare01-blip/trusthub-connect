@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 import { readAiConfig } from "@/lib/ai/config";
 import { AiGateway } from "@/lib/ai/gateway";
 import { RuntimeEventAiSpendLedger } from "@/lib/ai/spend-ledger";
-import { parseReport, replyPrompt, reportPrompt, type BenitaContext } from "@/lib/business/benita";
+import { askPrompt, marketPrompt, parsePost, parseReport, postPrompt, replyPrompt, reportPrompt, type BenitaContext } from "@/lib/business/benita";
 import { TOKEN_COST } from "@/lib/business/catalog";
 import type { SupabaseDataClient } from "@/lib/supabase/data-client";
 import { randomUUID } from "node:crypto";
@@ -18,11 +18,12 @@ const SORRY = "Benita is busy right now. Your tokens were returned, so please tr
 
 /** Tokens are taken first and returned on any failure, so an owner never pays for an answer they didn't get. */
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null) as { business?: unknown; action?: unknown; reviewId?: unknown } | null;
+  const body = await request.json().catch(() => null) as { business?: unknown; action?: unknown; reviewId?: unknown; text?: unknown } | null;
   const owner = await requireOwner(request, body?.business);
   if (owner instanceof NextResponse) return owner;
-  const action = body?.action === "reply" ? "reply" : body?.action === "report" ? "report" : null;
-  if (!action) return NextResponse.json({ error: "Unknown request." }, { status: 400, headers: noStore });
+  const action = (["reply", "report", "ask", "post", "market"] as const).find((name) => name === body?.action);
+  const input = typeof body?.text === "string" ? body.text.trim().slice(0, 800) : "";
+  if (!action || ((action === "ask" || action === "post") && input.length < 2)) return NextResponse.json({ error: "Unknown request." }, { status: 400, headers: noStore });
   const status = readAiConfig();
   if (!status.enabled) return NextResponse.json({ error: "Benita isn't switched on yet." }, { status: 503, headers: noStore });
   const cost = TOKEN_COST[action];
@@ -37,11 +38,29 @@ export async function POST(request: NextRequest) {
       if (!review) return NextResponse.json({ error: "That review was not found." }, { status: 404, headers: noStore });
       prompt = replyPrompt(context.name, review.rating, review.comment ?? "");
     }
+    if (action === "market") prompt = marketPrompt(context);
+    if (action === "post") prompt = postPrompt(context, input);
+    if (action === "ask") {
+      const saved = await call<{ ask: { role: string; body: string }[] }>(owner.db, "biz_ai_get", { p_business: owner.businessId });
+      prompt = askPrompt(context, saved.ask, input);
+    }
     const left = await call<number>(owner.db, "biz_tokens_spend", { p_business: owner.businessId, p_cost: cost, p_reason: action });
     charged = true;
-    const result = await ai.complete({ key: `biz:${action}:${randomUUID()}`, purpose: `business_${action}`, system: prompt.system, user: prompt.user, json: action === "report" });
+    const result = await ai.complete({ key: `biz:${action}:${randomUUID()}`, purpose: `business_${action}`, system: prompt.system, user: prompt.user, json: action === "report" || action === "post" });
     if (!result.ok) throw new Error(`ai ${result.reason}`);
     if (action === "reply") return NextResponse.json({ draft: result.text.trim().replace(/^"|"$/g, "").slice(0, 600), tokens: left }, { headers: noStore });
+    if (action === "market") return NextResponse.json({ answer: result.text.trim().slice(0, 1800), tokens: left }, { headers: noStore });
+    if (action === "ask") {
+      const answer = result.text.trim().slice(0, 1800);
+      await call(owner.db, "biz_ask_add", { p_business: owner.businessId, p_role: "owner", p_body: input });
+      await call(owner.db, "biz_ask_add", { p_business: owner.businessId, p_role: "benita", p_body: answer });
+      return NextResponse.json({ answer, tokens: left }, { headers: noStore });
+    }
+    if (action === "post") {
+      const post = parsePost(result.text);
+      if (!post) throw new Error("ai unreadable post");
+      return NextResponse.json({ post, tokens: left }, { headers: noStore });
+    }
     const report = parseReport(result.text, context.reviews.length);
     if (!report) throw new Error("ai unreadable report");
     const saved = await owner.db.from("biz_insights").insert({ business_id: owner.businessId, source: "ai", summary: report, review_count: context.reviews.length, created_by: owner.userId });

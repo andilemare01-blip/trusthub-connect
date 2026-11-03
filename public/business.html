@@ -223,6 +223,8 @@ const live = {
   openDeal(b, source, pack){ return server("/api/business/deal", { business: b, source, package: pack }); },
   benita(b, action, reviewId, text){ return server("/api/business/benita", { business: b, action, reviewId, text }); },
   referral(claimId, code){ return server("/api/business/referral", { claimId, code }); },
+  newBusiness(f){ return server("/api/business/new", f); },
+  myRequests(){ return server("/api/business/new"); },
   setAuto(b, on){ return server("/api/business/ai", { business: b, autoReply: on }); },
   async aiInsight(b){
     const { data, error } = await sb.functions.invoke("biz-ai-insight", { body: { business_id: b } });
@@ -291,6 +293,8 @@ const demo = {
   pay(){ return Promise.reject(new Error("This is a sample. Sign in with your own business to pay.")); },
   openDeal(){ return Promise.reject(new Error("This is a sample. Sign in with your own business to chat.")); },
   referral(){ return wait({ ok:true }); },
+  newBusiness(){ return Promise.reject(new Error("This is a sample. Sign in to add your business.")); },
+  myRequests(){ return wait({ requests: [] }); },
   benita(b, action, id, text){ if (action === "ask" || action === "market"){ const answer = action === "market" ? "People near you search most for sadza and takeaway, and you're ahead of two of three similar places on portions. Your two best moves: fix the lunch wait and answer your unhappy reviews." : "Your reviews love the food, but lunch waits and an unanswered EcoCash complaint are costing you. Start by replying to that complaint today, then prepare your top three plates before noon."; if (action === "ask") sample.ask.push({ role:"owner", body:text }, { role:"benita", body:answer }); sample.tokens = Math.max(0, sample.tokens - (action === "ask" ? 1 : 3)); return wait({ answer, tokens: sample.tokens }, 700); } if (action === "post"){ sample.tokens = Math.max(0, sample.tokens - 1); return wait({ post:{ title:"Friday lunch is on!", body:"Hot sadza nehuku, ready when you arrive. Come through this Friday." }, tokens: sample.tokens }, 700); } if (action === "reply") return wait({ draft:"Thank you for telling us, and we're sorry about this. Please WhatsApp us so we can put it right.", tokens: sample.tokens }); sample.tokens = Math.max(0, sample.tokens - 10); return this.aiInsight().then(summary => ({ report: summary.summary, tokens: sample.tokens })); },
   myBusinesses(){ const d = sampleDashboard(); return wait({ is_admin:false, businesses:[ { id:"demo-1", name:sample.biz.name, city:sample.biz.city, category:sample.biz.category, plan:sample.plan, reviews_count:d.stats.reviews, avg_rating:d.stats.avg, unanswered:d.stats.unanswered, unread_chats:d.stats.unread_chats } ], claims:[] }); },
   dashboard(){ return wait(sampleDashboard()); },
@@ -343,6 +347,7 @@ async function boot(){
 }
 async function loadMine(){
   S.list = await S.api.myBusinesses();
+  S.requests = (await S.api.myRequests().catch(() => ({ requests: [] }))).requests;
   const saved = store.get("biz");
   const ids = S.list.businesses.map(b => b.id);
   S.bizId = ids.includes(saved) ? saved : ids[0] || null;
@@ -748,17 +753,40 @@ function viewClaim(v){
   const has = S.list?.businesses?.length;
   v.innerHTML = `
     ${has ? `<button class="btn ghost sm" id="back" style="align-self:flex-start">← Back</button>` : `<section class="panel stack"><h1 style="font-size:28px">Find your business</h1><p class="muted" style="margin:0">Trusthub already lists ${S.mode==="demo"?"thousands of":"almost 15,000"} businesses across Zimbabwe. Find yours and claim it. It's free.</p></section>`}
+    ${(S.requests||[]).map(r => `<div class="lock"><span><b>${esc(r.name)}</b>: ${r.status === "rejected" ? "we couldn't confirm this business. Talk to your agent if this is a mistake." : "we'll call you to confirm it. It goes live once confirmed. <a href=\"/business?sample=1\">See a sample while you wait</a>"}</span></div>`).join("")}
     ${(S.list?.claims||[]).map(c => `<div class="lock"><span><b>${esc(c.business_name)}</b>: your claim is ${esc(c.status.replace("_"," "))}. We'll call you to confirm.</span></div>`).join("")}
     <section class="panel stack"><form class="row" id="findForm" style="flex-wrap:nowrap"><input id="q" placeholder="Business name" autocomplete="off"><input id="city" placeholder="City" style="max-width:120px"><button class="btn">Search</button></form>
-      <div id="results"><p class="muted" style="font-size:14px;margin:0">Type at least two letters of your business name.</p></div></section>`;
+      <div id="results"><p class="muted" style="font-size:14px;margin:0">Type at least two letters of your business name.</p></div></section>
+    <section class="panel stack"><h2>Can't find your business?</h2><p class="muted" style="margin:0;font-size:14px">Add it here and we'll call you to confirm it's real. Then it goes live with you as the owner.</p><div><button class="btn sm" id="addBiz">Add my business</button></div></section>`;
+  $("#addBiz").onclick = addBusinessForm;
   $("#back")?.addEventListener("click", () => { S.tab = "more"; render(); });
   $("#findForm").onsubmit = async e => {
     e.preventDefault(); const q = $("#q").value.trim(); if (q.length < 2) return;
     $("#results").innerHTML = '<p class="muted">Searching…</p>';
     const res = await S.api.find(q, $("#city").value.trim());
-    $("#results").innerHTML = res.map(b => `<div class="result"><div><b>${esc(b.name)}</b><div class="muted" style="font-size:13px">${esc([b.category,b.area,b.city].filter(Boolean).join(" · "))} · ${b.reviews_count} reviews</div></div>${b.claimed ? '<span class="tag">Claimed</span>' : `<button class="btn sm" data-claim="${b.id}" data-name="${esc(b.name)}">Claim</button>`}</div>`).join("") || '<p class="muted">No match. Check the spelling, or ask a Trusthub agent to add your business.</p>';
+    $("#results").innerHTML = res.map(b => `<div class="result"><div><b>${esc(b.name)}</b><div class="muted" style="font-size:13px">${esc([b.category,b.area,b.city].filter(Boolean).join(" · "))} · ${b.reviews_count} reviews</div></div>${b.claimed ? '<span class="tag">Claimed</span>' : `<button class="btn sm" data-claim="${b.id}" data-name="${esc(b.name)}">Claim</button>`}</div>`).join("") || '<p class="muted">No match found. You can add your business below.</p>';
     $("#results").querySelectorAll("[data-claim]").forEach(x => x.onclick = () => claimForm(x.dataset.claim, x.dataset.name));
   };
+}
+function addBusinessForm(){
+  const kinds = ["Food & Dining","Groceries","Retail","Beauty & Salon","Healthcare","Education","Accommodation & Tourism","Construction & Engineering","Motoring","Property","Finance","Business Services","Other"];
+  sheet(`<h2>Add your business</h2><p class="muted" style="margin:0;font-size:14px">Nobody sees it until we've called you to confirm it.</p>
+    <label>Business name<input id="nName" maxlength="120"></label>
+    <label>What kind of business?<select id="nKind">${kinds.map(k => `<option>${esc(k)}</option>`).join("")}</select></label>
+    <label>City or town<input id="nCity" maxlength="80"></label>
+    <label>Area or suburb (optional)<input id="nArea" maxlength="80"></label>
+    <label>Address (optional)<input id="nAddr" maxlength="200"></label>
+    <label>Phone number we can call<input id="nPhone" inputmode="tel" maxlength="30"></label>
+    <label>Your name<input id="nWho" maxlength="120"></label>
+    <label>Your role<select id="nRole"><option>Owner</option><option>Manager</option><option>Staff</option></select></label>
+    <div class="row"><button class="btn" data-send>Send for confirmation</button><button class="btn ghost" data-close>Cancel</button></div>`, s => {
+      s.querySelector("[data-close]").onclick = () => s.remove();
+      s.querySelector("[data-send]").onclick = async e => {
+        const f = { name: s.querySelector("#nName").value, category: s.querySelector("#nKind").value, city: s.querySelector("#nCity").value, area: s.querySelector("#nArea").value, address: s.querySelector("#nAddr").value, phone: s.querySelector("#nPhone").value, applicant: s.querySelector("#nWho").value, role: s.querySelector("#nRole").value, agent: store.get("agent") || "" };
+        e.target.disabled = true;
+        try { await S.api.newBusiness(f); s.remove(); toast("Sent. We'll call you to confirm."); S.requests = (await S.api.myRequests()).requests; render(); } catch(x){ toast(x.message); e.target.disabled = false; }
+      };
+  });
 }
 function claimForm(id, name){
   sheet(`<h2>Claim ${esc(name)}</h2><p class="muted" style="margin:0;font-size:14px">The TrustHub team will confirm you run this business. This protects you from people pretending to be you.</p>

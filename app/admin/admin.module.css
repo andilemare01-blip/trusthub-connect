@@ -1,5 +1,6 @@
 .shell,
 .loginPage {
+  color-scheme: light;
   --teal: #0f4f47;
   --gold: #f2c14e;
   --cream: #f7f3ec;

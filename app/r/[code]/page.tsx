@@ -38,7 +38,8 @@ export default async function CardLanding({ params, searchParams }: LandingProps
     const source = query.s === "nfc" ? "nfc" : query.s === "qr" ? "qr" : "link";
     const userAgent = (await headers()).get("user-agent");
     // A failed count must never stop someone from reviewing.
-    visit = await recordCardTap(db, card.code, source, userAgent).catch(() => null);
+    // Coming back from the app to choose a reminder isn't a new tap.
+    if (query.later !== "1") visit = await recordCardTap(db, card.code, source, userAgent).catch(() => null);
   }
 
   if (!card || card.status !== "active" || !card.business) {
@@ -57,7 +58,8 @@ export default async function CardLanding({ params, searchParams }: LandingProps
 
   const business = card.business;
   const place = [business.area, business.city].filter(Boolean).join(", ");
-  const whatsappHref = number ? `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code} via page`)}` : null;
+  const whatsappHref = number ? `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code} now via page`)}` : null;
+  const laterHref = (when: string) => `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code} ${when} via page`)}`;
   // The TrustHub app's own review page for this business (the app and Connect share the businesses table).
   const appBase = (process.env.TRUSTHUB_APP_URL ?? "https://trusthub-five.vercel.app").replace(/\/+$/, "");
   // The visit token lets the app save one verified review, with or without an account.
@@ -99,6 +101,17 @@ export default async function CardLanding({ params, searchParams }: LandingProps
           </a>
         </div>
       </section>
+      {number ? (
+        <section className={styles.later}>
+          <h2>Eating later?</h2>
+          <p>Choose a time and we&apos;ll remind you on WhatsApp to review, after the full experience.</p>
+          <div>
+            <a href={laterHref("in 1 hour")}>In 1 hour</a>
+            <a href={laterHref("in 2 hours")}>In 2 hours</a>
+            <a href={laterHref("tonight")}>Tonight</a>
+          </div>
+        </section>
+      ) : null}
       <footer className={styles.footer}>
         <span className={styles.badge}>Reviews from this card count as verified visits</span>
         <span className={styles.small}>Card {card.code} · No sign-up needed</span>

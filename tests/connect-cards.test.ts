@@ -13,6 +13,12 @@ test("card codes are read the same way on the landing page and in WhatsApp", () 
   assert.equal(parseCardCode("review th1042 please"), "TH-1042");
 });
 
+test("with the TrustHub number, a card also gets a direct WhatsApp link that works without browser data", () => {
+  assert.equal(cardLinks("https://trusthub-connect.vercel.app", "TH-1042", "+263 77 123 4567").whatsapp,
+    "https://wa.me/263771234567?text=REVIEW%20TH-1042");
+  assert.equal(cardLinks("https://trusthub-connect.vercel.app", "TH-1042", "").whatsapp, undefined);
+});
+
 test("each card has one NFC link and one QR link on the production site", () => {
   assert.deepEqual(cardLinks("https://trusthub-connect.vercel.app/", "TH-1042"), {
     nfc: "https://trusthub-connect.vercel.app/r/TH-1042?s=nfc",

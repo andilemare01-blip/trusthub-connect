@@ -25,7 +25,7 @@ interface Metrics {
   } | null;
 }
 interface QueueItem { id: string; title: string; detail: string; tags: string[]; status: string; createdAt: string }
-interface Card { id: string; code: string; status: "active" | "paused" | "unassigned"; businessName: string | null; businessPlace: string | null; taps: number; reviews: number; newUsers: number; links: { nfc: string; qr: string } }
+interface Card { id: string; code: string; status: "active" | "paused" | "unassigned"; businessName: string | null; businessPlace: string | null; taps: number; reviews: number; newUsers: number; links: { nfc: string; qr: string; whatsapp?: string } }
 interface BusinessOption { id: string; name: string; place: string }
 interface Health {
   health?: {
@@ -562,7 +562,7 @@ function Cards({ api }: { api: Api }) {
   /** Programs a blank NFC card with this card's link: tap "Write to card", then hold the card to the back of the phone (Chrome on Android). */
   async function writeNfc(url: string, code: string) {
     const Reader = (window as unknown as { NDEFReader?: new () => { write(message: { records: { recordType: string; data: string }[] }): Promise<void> } }).NDEFReader;
-    if (!Reader) { setError("Writing NFC cards works in Chrome on an Android phone. Open this admin page there, then tap Write to card again."); return; }
+    if (!Reader) { setError("This phone can't write cards from a web page (iPhones never can). Tap \"Copy WhatsApp link\" instead and paste it into the NFC Tools app: Write → Add a record → URL → Write."); return; }
     try {
       setError(null); setCopied(`Hold card ${code} to the back of your phone now…`);
       await new Reader().write({ records: [{ recordType: "url", data: url }] });
@@ -578,7 +578,7 @@ function Cards({ api }: { api: Api }) {
 
   return (
     <>
-      <header className={styles.head}><div><h1>Review cards</h1><p className={styles.muted}>One card per business. Each card has its own link and QR code, and every tap is counted.</p></div></header>
+      <header className={styles.head}><div><h1>Review cards</h1><p className={styles.muted}>One card per business. To program a card: tap &ldquo;Copy WhatsApp link&rdquo; on its row, paste it into NFC Tools (Write &rarr; Add a record &rarr; URL), then hold the card to your phone. The WhatsApp link opens WhatsApp straight away, so it works for people on WhatsApp bundles with no data.</p></div></header>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {copied && copied.length > 6 ? <p className={styles.muted} role="status">{copied}</p> : null}
       <div className={styles.row}>
@@ -597,8 +597,10 @@ function Cards({ api }: { api: Api }) {
                       <td><span className={card.status === "active" ? styles.statusOn : styles.statusOff}>{card.status === "active" ? "Active" : card.status === "paused" ? "Paused" : "Unassigned"}</span></td>
                       <td>{card.taps}</td><td>{card.reviews}</td><td>{card.newUsers}</td>
                       <td className={styles.rowActions}>
+                        {card.links.whatsapp ? <button type="button" className={styles.linkBtn} onClick={() => void copy(card.links.whatsapp!, `WhatsApp link for ${card.code} copied. Paste it into NFC Tools.`)}>Copy WhatsApp link</button> : null}
+                        <button type="button" className={styles.linkBtn} onClick={() => void copy(card.links.nfc, `Web link for ${card.code} copied.`)}>Copy web link</button>
                         <a className={styles.linkBtn} href={`/cards/${card.code}/print`} target="_blank" rel="noreferrer">Print</a>
-                        <button type="button" className={styles.linkBtn} onClick={() => void writeNfc(card.links.nfc, card.code)}>Write to card</button>
+                        <button type="button" className={styles.linkBtn} onClick={() => void writeNfc(card.links.whatsapp ?? card.links.nfc, card.code)}>Write to card</button>
                         {card.status === "active" ? <button type="button" className={styles.linkBtn} onClick={() => void setStatus(card, "paused")}>Pause</button> : card.status === "paused" ? <button type="button" className={styles.linkBtn} onClick={() => void setStatus(card, "active")}>Activate</button> : null}
                       </td>
                     </tr>
@@ -628,9 +630,16 @@ function Cards({ api }: { api: Api }) {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={`/api/cards/${created.code}/qr`} alt={`QR code for card ${created.code}`} width={112} height={112} />
                 <div className={styles.qrLinks}>
-                  <span className={styles.small}>Link for the NFC chip</span>
+                  {created.links.whatsapp ? (
+                    <>
+                      <span className={styles.small}>Link for the NFC chip (opens WhatsApp, works without data)</span>
+                      <b className={styles.breakAll}>{created.links.whatsapp}</b>
+                      <button type="button" className={styles.secondary} onClick={() => void copy(created.links.whatsapp!, "wa")}>{copied === "wa" ? "Copied" : "Copy WhatsApp link"}</button>
+                    </>
+                  ) : null}
+                  <span className={styles.small}>{created.links.whatsapp ? "Web link (opens the browser)" : "Link for the NFC chip"}</span>
                   <b className={styles.breakAll}>{created.links.nfc}</b>
-                  <button type="button" className={styles.secondary} onClick={() => void copy(created.links.nfc, "nfc")}>{copied === "nfc" ? "Copied" : "Copy NFC link"}</button>
+                  <button type="button" className={styles.secondary} onClick={() => void copy(created.links.nfc, "nfc")}>{copied === "nfc" ? "Copied" : created.links.whatsapp ? "Copy web link" : "Copy NFC link"}</button>
                 </div>
               </div>
               <h3 className={styles.step}><span>3</span>Make the card</h3>
@@ -638,7 +647,7 @@ function Cards({ api }: { api: Api }) {
                 <a className={styles.primarySmall} href={`/api/cards/${created.code}/qr?download=1`}>Download QR</a>
                 <a className={styles.secondary} href={`/cards/${created.code}/print`} target="_blank" rel="noreferrer">Print card</a>
               </div>
-              <p className={styles.note}>To write the chip: open a free NFC app (such as NFC Tools), choose Write, add a URL record with the NFC link above, tap the card, then lock it. If a business closes, pause the card here; there's no need to reprint.</p>
+              <p className={styles.note}>To write the chip: open a free NFC app (such as NFC Tools), choose Write, add a URL record with the link above (the WhatsApp one if shown), tap the card, then lock it. If a business closes, pause the card here; there's no need to reprint.</p>
             </>
           ) : null}
         </section>

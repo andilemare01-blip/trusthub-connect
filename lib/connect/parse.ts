@@ -142,7 +142,9 @@ export function categorise(text: string): string {
   return CATEGORY_WORDS.find(([, pattern]) => pattern.test(text))?.[0] ?? "general";
 }
 
-const STOP_WORDS = new Set(["the", "and", "for", "with", "want", "need", "looking", "selling", "sell", "buy", "buying", "good", "condition", "price", "cheap", "please", "any", "some", "who", "has", "have", "under", "below", "budget", "near", "around", "from", "that", "this", "one", "new", "used", "urgent", "urgently"]);
+const STOP_WORDS = new Set(["the", "and", "for", "with", "want", "need", "looking", "selling", "sell", "buy", "buying", "good", "condition", "price", "cheap", "please", "any", "some", "who", "has", "have", "under", "below", "budget", "near", "around", "from", "that", "this", "one", "new", "used", "urgent", "urgently",
+  // Question words: "what is a Honda Fit selling for right now" is a search for a Honda Fit.
+  "what", "how", "much", "many", "does", "are", "was", "can", "could", "where", "when", "which", "you", "your", "there", "right", "now", "today", "currently", "current", "cost", "costs", "worth", "going", "tell", "show", "know", "about", "get", "find"]);
 
 /** Search words from a free-text item description, without towns, prices or filler. */
 export function keywords(text: string): string[] {

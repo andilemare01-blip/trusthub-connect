@@ -475,6 +475,8 @@ function ToCheck({ api, onChanged, counts }: { api: Api; onChanged: () => void; 
   const [kind, setKind] = useState<QueueKind>("reviews");
   const [items, setItems] = useState<QueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
   const queue = QUEUES.find((item) => item.key === kind)!;
   const load = useCallback(async () => {
     setItems(null);
@@ -492,14 +494,37 @@ function ToCheck({ api, onChanged, counts }: { api: Api; onChanged: () => void; 
     } catch (failure) { setError(failure instanceof Error ? failure.message : "That change could not be saved."); }
   }
 
+  async function approveEverything() {
+    setConfirmAll(false);
+    setNote("Approving…");
+    try {
+      const result = await api<{ approved: number }>("/api/admin/queue", { method: "POST", body: JSON.stringify({ kind, all: true }) });
+      setNote(`${result.approved.toLocaleString()} approved.`);
+      onChanged();
+      await load();
+    } catch (failure) { setNote(null); setError(failure instanceof Error ? failure.message : "Those changes could not be saved."); }
+  }
+
   const badge: Record<QueueKind, number> = { reviews: counts?.reviews ?? 0, listings: counts?.listings ?? 0, businesses: counts?.businesses ?? 0, scams: counts?.scamReports ?? 0 };
   return (
     <>
       <header className={styles.head}><div><h1>To check</h1><p className={styles.muted}>New contributions wait here until someone checks them. Nothing here is shown as verified until you approve it.</p></div></header>
       <div className={styles.pills} role="tablist">
-        {QUEUES.map((item) => <button key={item.key} type="button" role="tab" aria-selected={kind === item.key} className={kind === item.key ? styles.pillOn : styles.pill} onClick={() => setKind(item.key)}>{item.label}{badge[item.key] ? ` · ${badge[item.key]}` : ""}</button>)}
+        {QUEUES.map((item) => <button key={item.key} type="button" role="tab" aria-selected={kind === item.key} className={kind === item.key ? styles.pillOn : styles.pill} onClick={() => { setKind(item.key); setConfirmAll(false); setNote(null); }}>{item.label}{badge[item.key] ? ` · ${badge[item.key].toLocaleString()}` : ""}</button>)}
       </div>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
+      {note ? <p className={styles.info} role="status">{note}</p> : null}
+      {kind !== "scams" && badge[kind] > 0 ? (
+        <div className={styles.actionsRow}>
+          {confirmAll ? (
+            <>
+              <span className={styles.muted}>{kind === "listings" ? `Approve all ${badge[kind].toLocaleString()}? Listings from websites will still say Found online.` : `Approve all ${badge[kind].toLocaleString()}?`}</span>
+              <button type="button" className={styles.primarySmall} onClick={() => void approveEverything()}>Yes, approve all</button>
+              <button type="button" className={styles.secondary} onClick={() => setConfirmAll(false)}>Cancel</button>
+            </>
+          ) : <button type="button" className={styles.primarySmall} onClick={() => setConfirmAll(true)}>Approve all ({badge[kind].toLocaleString()})</button>}
+        </div>
+      ) : null}
       <section className={styles.panel}>
         {items === null ? <p className={styles.muted}>Loading…</p> : items.length === 0 ? <p className={styles.empty}>{queue.empty}</p> : items.map((item) => (
           <div key={item.id} className={styles.item}>

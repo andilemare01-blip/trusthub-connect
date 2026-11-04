@@ -225,3 +225,14 @@ declare v_def text := pg_get_functiondef('public.app_insights(text)'::regprocedu
 begin
   execute replace(v_def, $q$coalesce(nullif(b.category, ''), 'Other') as category$q$, $q$app_trade(b.category) as category$q$);
 end $$;
+
+-- Approves every waiting listing at once, from the admin To check screen.
+create function public.ceo_listings_approve_all() returns integer
+language plpgsql security definer set search_path = public, pg_temp set statement_timeout = '120s' as $$
+declare v_count integer;
+begin
+  update trusthub_connect_listings set status = 'approved', updated_at = now() where status = 'pending';
+  get diagnostics v_count = row_count;
+  return v_count;
+end $$;
+revoke all on function public.ceo_listings_approve_all() from public, anon, authenticated;

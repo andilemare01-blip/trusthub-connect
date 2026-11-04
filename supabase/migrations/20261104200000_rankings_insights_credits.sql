@@ -236,3 +236,10 @@ begin
   return v_count;
 end $$;
 revoke all on function public.ceo_listings_approve_all() from public, anon, authenticated;
+
+-- Jobs stay in Pulse after a listing is approved.
+do $$
+declare v_def text := pg_get_functiondef('public.app_pulse(text)'::regprocedure);
+begin
+  execute replace(v_def, $q$l.status = 'pending'$q$, $q$l.status in ('pending', 'approved')$q$);
+end $$;

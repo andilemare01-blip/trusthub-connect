@@ -23,6 +23,8 @@ test("each card has one NFC link and one QR link on the production site", () => 
   assert.deepEqual(cardLinks("https://trusthub-connect.vercel.app/", "TH-1042"), {
     nfc: "https://trusthub-connect.vercel.app/r/TH-1042?s=nfc",
     qr: "https://trusthub-connect.vercel.app/r/TH-1042?s=qr",
+    app: "https://trusthub-connect.vercel.app/r/TH-1042?s=nfc&to=app",
+    appQr: "https://trusthub-connect.vercel.app/r/TH-1042?s=qr&to=app",
   });
 });
 

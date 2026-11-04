@@ -6,6 +6,7 @@ export interface BenitaContext {
   searches: { q: string; n: number }[];
   similar_nearby: number;
   competitors?: { name: string; avg: number; reviews: number }[];
+  customers?: { taps_30: number; card_reviews_30: number; known_customers: number; returning_customers: number; rating_change: number | null; busiest_day: string | null };
   has_website?: boolean; opening_hours?: string | null; phone_listed?: boolean; unanswered?: number; card_taps_30?: number; news?: string[];
   facts: { label: string; value: string | null; unit: string | null; currency: string | null }[];
 }
@@ -60,7 +61,8 @@ function brief(context: BenitaContext): string {
 Trade: ${[context.category, context.subcategory].filter(Boolean).join(" - ") || "unknown"}. Place: ${[context.area, context.city].filter(Boolean).join(", ") || "unknown"}
 About: ${(context.description ?? "not given").slice(0, 300)}
 Page: website ${context.has_website ? "yes" : "no"}, phone ${context.phone_listed ? "yes" : "missing"}, hours ${context.opening_hours ? "yes" : "missing"}
-Reviews: ${context.reviews.length}, average ${average}, ${context.unanswered ?? 0} unanswered. Review card taps in 30 days: ${context.card_taps_30 ?? 0}
+Reviews: ${context.reviews.length}, average ${average}, ${context.unanswered ?? 0} unanswered. Review card taps in 30 days: ${context.card_taps_30 ?? 0}, reviews from cards: ${context.customers?.card_reviews_30 ?? 0}, busiest day: ${context.customers?.busiest_day ?? "unknown"}
+Customers: ${context.customers?.known_customers ?? 0} known, ${context.customers?.returning_customers ?? 0} came back${context.customers?.rating_change != null ? `, average rating change for those who came back: ${context.customers.rating_change}` : ""}
 Similar businesses in this city: ${context.similar_nearby}. Rated ones: ${(context.competitors ?? []).map((item) => `${item.name} ${item.avg} stars (${item.reviews})`).join("; ") || "none yet"}
 Searches on TrustHub, 60 days: ${context.searches.map((search) => `${search.q} (${search.n})`).join(", ") || "none matching"}
 Today's facts: ${context.facts.slice(0, 8).map((fact) => `${fact.label}: ${fact.value ?? ""} ${fact.unit ?? ""}`).join("; ") || "none"}

@@ -215,20 +215,23 @@ test("reading reviews works through the production wrapper, not only the test st
   const { SupabaseConnectStore } = await import("../lib/connect/supabase-store.ts");
   const tables: Record<string, Record<string, unknown>[]> = {
     trusthub_connect_reviews: [{ id: "r1", rating: 4, review_text: "Crispy and fast", status: "published", verified_visit: true, created_at: "2026-10-28T10:00:00Z", directory_business_id: "b1" }],
-    businesses: [{ id: "b1", name: "Chicken Inn", category: "Food & Dining", city: "Chiredzi", area: null, phone: null, reviews_count: 1 }],
+    reviews: [{ id: "a1", rating: 5, comment: "Lovely staff from the app", created_at: "2026-10-29T10:00:00Z", business_id_uuid: "b1" }],
+    businesses: [{ id: "b1", name: "Chicken Inn", category: "Food & Dining", city: "Chiredzi", area: null, phone: null, reviews_count: 2 }],
   };
   const builder = (table: string) => {
     let rows = [...(tables[table] ?? [])];
     const api: Record<string, unknown> = {};
-    for (const method of ["select", "eq", "order", "limit", "gte", "ilike"]) api[method] = () => api;
+    for (const method of ["select", "eq", "order", "limit", "gte", "ilike", "not"]) api[method] = () => api;
     api.in = (column: string, values: unknown[]) => { rows = rows.filter((row) => values.includes(row[column]) || column === "status"); return api; };
     api.then = (resolve: (value: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(resolve);
     return api;
   };
   const store = new SupabaseConnectStore(createResilientDataClient({ from: builder } as never) as never);
   const found = await store.searchReviews({ terms: ["chicken"], city: "Chiredzi", limit: 5 });
-  assert.equal(found.length, 1);
+  assert.deepEqual(found.map((item) => item.id), ["a1", "r1"], "app and WhatsApp reviews appear together, newest first");
   assert.equal(found[0].business.name, "Chicken Inn");
   const reply = await new ConnectJourneys(store).handle("Chicken inn chiredzi", context, { flow: "read_reviews", step: "which", data: {} });
   assert.match(reply?.reply ?? "", /Crispy and fast/);
+  assert.match(reply?.reply ?? "", /Lovely staff from the app/);
+  assert.match(reply?.reply ?? "", /29 Oct 2026/);
 });

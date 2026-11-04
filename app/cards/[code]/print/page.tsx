@@ -10,25 +10,28 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Print review card", robots: { index: false, follow: false } };
 
 /** Front and back of a review card at true size (85.6 × 54 mm), ready to print. */
-export default async function PrintCard({ params }: { params: Promise<{ code: string }> }) {
+export default async function PrintCard({ params, searchParams }: { params: Promise<{ code: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { code: raw } = await params;
+  const isApp = (await searchParams).type === "app";
   const code = normalizeCardCode(raw);
   const card = code ? await getLandingCard(createSupabaseServerClient() as unknown as ConnectDbClient, code).catch(() => null) : null;
   if (!card) return <main className={styles.sheet}><p>That card doesn&apos;t exist.</p></main>;
   const host = (await headers()).get("host");
   const base = process.env.PUBLIC_BASE_URL?.trim() || (host ? `https://${host}` : "");
-  const qr = qrSvg(cardLinks(base, card.code).qr, { size: 300, dark: "#0f4f47" });
+  const links = cardLinks(base, card.code, process.env.TRUSTHUB_WHATSAPP_NUMBER);
+  const qr = qrSvg(isApp ? links.appQr : links.qr, { size: 300, dark: "#0f4f47" });
+  const chipLink = isApp ? links.app : links.whatsapp ?? links.nfc;
 
   return (
     <main className={styles.sheet}>
-      <p className={styles.hint}>Print at 100% scale. Write the NFC link <code>{cardLinks(base, card.code).nfc}</code> to the chip.</p>
+      <p className={styles.hint}>Print at 100% scale. Write the NFC link <code>{chipLink}</code> to the chip.</p>
       <section className={`${styles.card} ${styles.front}`} aria-label="Card front">
         <div className={styles.brand}><span className={styles.mark}>T</span><span><b>TrustHub</b><small>Connect</small></span></div>
         <div className={styles.frontBody}>
           <div>
             <h1>How did we do?</h1>
-            <p>Tap your phone here or scan to review <b>{card.business?.name ?? "this business"}</b> on WhatsApp.</p>
-            <p className={styles.tap}>Takes 20 seconds · no app needed</p>
+            <p>Tap your phone here or scan to review <b>{card.business?.name ?? "this business"}</b> {isApp ? "in the TrustHub app" : "on WhatsApp"}.</p>
+            <p className={styles.tap}>{isApp ? "Needs Wi-Fi or mobile data" : "Takes 20 seconds · no app needed"}</p>
           </div>
           <div className={styles.qr} dangerouslySetInnerHTML={{ __html: qr }} />
         </div>
@@ -37,8 +40,17 @@ export default async function PrintCard({ params }: { params: Promise<{ code: st
         <h2>How it works</h2>
         <ol>
           <li><b>Tap or scan</b><span>Hold your phone near the card, or scan the QR code.</span></li>
-          <li><b>WhatsApp opens</b><span>Wisdom already knows which business you&apos;re at.</span></li>
-          <li><b>Rate and earn</b><span>Your review counts as a verified visit, and you earn a free credit.</span></li>
+          {isApp ? (
+            <>
+              <li><b>TrustHub opens</b><span>The review page for this business comes up.</span></li>
+              <li><b>Rate and share</b><span>Your review helps others find businesses they can trust.</span></li>
+            </>
+          ) : (
+            <>
+              <li><b>WhatsApp opens</b><span>Wisdom already knows which business you&apos;re at.</span></li>
+              <li><b>Rate and earn</b><span>Your review counts as a verified visit, and you earn a free credit.</span></li>
+            </>
+          )}
         </ol>
         <div className={styles.backFoot}><span>Find trusted businesses on <b>TrustHub Connect</b></span><span className={styles.code}>Card {card.code}</span></div>
       </section>

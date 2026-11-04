@@ -216,7 +216,12 @@ export interface ConnectStore {
   searchDirectory(name: string, city: string | null, limit: number, anywhere?: boolean): Promise<DirectoryBusiness[]>;
   getBusiness(id: string): Promise<DirectoryBusiness | null>;
   /** The newest review this identity left for this business, if any. */
-  lastReviewAt(identityId: string, businessId: string): Promise<string | null>;
+  /** This person's latest review of this business, for a welcome back. */
+  lastReview(identityId: string, businessId: string): Promise<{ createdAt: string; rating: number; text: string } | null>;
+  /** Counts a card opened on WhatsApp. A wa.me link can only be counted when its message arrives. */
+  recordCardOpen(cardId: string): Promise<void>;
+  /** The owner's "Did you know" facts for this business. */
+  businessFacts(businessId: string): Promise<string[]>;
   saveReview(review: NewReview): Promise<{ id: string; status: "published" | "pending" }>;
   /** Reviews left through TrustHub Connect, newest first. Rejected reviews are never returned. */
   searchReviews(query: ReviewQuery): Promise<ReviewItem[]>;
@@ -271,6 +276,8 @@ export class InMemoryConnectStore implements ConnectStore {
   scamReports: { phone: string; reason: string; identityId: string; createdAt: string }[] = [];
   feedback: { message: string; identityId: string }[] = [];
   credits: { identityId: string; delta: number; reason: CreditReason; reference: string }[] = [];
+  cardOpens: string[] = [];
+  ownerFacts = new Map<string, string[]>();
   private readonly now: () => string;
   private sequence = 0;
 
@@ -285,8 +292,15 @@ export class InMemoryConnectStore implements ConnectStore {
     return this.businesses.filter((business) => lower(business.name).includes(wanted)).slice(0, limit);
   }
   async getBusiness(id: string) { return this.businesses.find((business) => business.id === id) ?? null; }
-  async lastReviewAt(identityId: string, businessId: string) {
-    return this.reviews.filter((review) => review.identityId === identityId && review.businessId === businessId).map((review) => review.createdAt).sort().at(-1) ?? null;
+  async lastReview(identityId: string, businessId: string) {
+    const latest = this.reviews.filter((review) => review.identityId === identityId && review.businessId === businessId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+    return latest ? { createdAt: latest.createdAt, rating: latest.rating, text: latest.text } : null;
+  }
+  async recordCardOpen(cardId: string) {
+    this.cardOpens.push(cardId);
+  }
+  async businessFacts(businessId: string) {
+    return this.ownerFacts.get(businessId) ?? [];
   }
   async saveReview(review: NewReview) {
     const existing = this.reviews.find((stored) => stored.sourceMessageId === review.sourceMessageId);

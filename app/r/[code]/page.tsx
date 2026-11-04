@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import styles from "./landing.module.css";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { getLandingCard, normalizeCardCode, recordCardTap } from "@/lib/connect/cards";
@@ -32,11 +33,12 @@ export default async function CardLanding({ params, searchParams }: LandingProps
   const card = code ? await getLandingCard(db, code).catch(() => null) : null;
   const number = whatsappNumber();
 
+  let visit: string | null = null;
   if (card && card.status === "active" && card.business) {
     const source = query.s === "nfc" ? "nfc" : query.s === "qr" ? "qr" : "link";
     const userAgent = (await headers()).get("user-agent");
     // A failed count must never stop someone from reviewing.
-    await recordCardTap(db, card.code, source, userAgent).catch(() => undefined);
+    visit = await recordCardTap(db, card.code, source, userAgent).catch(() => null);
   }
 
   if (!card || card.status !== "active" || !card.business) {
@@ -55,10 +57,14 @@ export default async function CardLanding({ params, searchParams }: LandingProps
 
   const business = card.business;
   const place = [business.area, business.city].filter(Boolean).join(", ");
-  const whatsappHref = number ? `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code}`)}` : null;
+  const whatsappHref = number ? `https://wa.me/${number}?text=${encodeURIComponent(`REVIEW ${card.code} via page`)}` : null;
   // The TrustHub app's own review page for this business (the app and Connect share the businesses table).
   const appBase = (process.env.TRUSTHUB_APP_URL ?? "https://trusthub-five.vercel.app").replace(/\/+$/, "");
-  const appHref = `${appBase}/business/${encodeURIComponent(business.id)}/review?from=card&card=${encodeURIComponent(card.code)}`;
+  // The visit token lets the app save one verified review, with or without an account.
+  const appHref = `${appBase}/business/${encodeURIComponent(business.id)}/review${visit ? `?visit=${encodeURIComponent(visit)}` : ""}`;
+
+  // The app card skips this page: the tap is already counted above, so go straight to the review.
+  if (query.to === "app") redirect(appHref);
 
   return (
     <main className={styles.page}>
@@ -69,6 +75,13 @@ export default async function CardLanding({ params, searchParams }: LandingProps
         <p className={styles.meta}>{[business.category, place].filter(Boolean).join(" · ")}</p>
         {business.reviewsCount > 0 ? <p className={styles.count}>{business.reviewsCount} {business.reviewsCount === 1 ? "review" : "reviews"} on TrustHub</p> : null}
       </section>
+      {card.facts.length ? (
+        <aside className={styles.fact}>
+          <b>Did you know?</b>
+          <p>{card.facts[0].text}</p>
+          <small>From the owner</small>
+        </aside>
+      ) : null}
       <section className={styles.body}>
         <h2 className={styles.question}>How was your visit?</h2>
         <p className={styles.lead}>It takes about 20 seconds. Your review helps others find businesses they can trust.</p>

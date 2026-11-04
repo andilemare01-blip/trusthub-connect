@@ -94,3 +94,17 @@ test("the public front page has no CEO door", async () => {
   assert.match(page, /href="\/agent\/join"/);
   assert.doesNotMatch(page, /\/admin|CEO/);
 });
+
+test("Benita answers from the data, and still answers from it when the AI fails", async () => {
+  const { askAdvisor } = await import("../lib/benita/advisor.ts");
+  const { InMemoryConnectStore } = await import("../lib/connect/store.ts");
+  const store = new InMemoryConnectStore();
+  const db = { from: () => { throw new Error("unused"); } } as never;
+  let sent = "";
+  const answered = await askAdvisor({ db, store, city: "Harare", question: "What sells in Harare?", key: "k", history: [{ role: "user", body: "Hello there" }], gateway: { complete: async (request) => { sent = request.user; return { ok: true, text: "Food sells." }; } } });
+  assert.equal(answered, "Food sells.");
+  assert.match(sent, /Hello there/);
+  assert.match(sent, /TrustHub data/);
+  const fallback = await askAdvisor({ db, store, city: "Harare", question: "I want to start a business", key: "k2", gateway: { complete: async () => ({ ok: false, reason: "timeout" }) } });
+  assert.ok(fallback.length > 20);
+});

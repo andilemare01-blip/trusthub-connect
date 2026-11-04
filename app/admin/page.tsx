@@ -5,7 +5,7 @@ import styles from "./admin.module.css";
 import { BusinessView } from "./business-view";
 
 type RangeKey = "today" | "7d" | "30d";
-type View = "founder" | "business" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
+type View = "founder" | "business" | "benita" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
 type QueueKind = "reviews" | "listings" | "businesses" | "scams";
 
 interface Metrics {
@@ -159,6 +159,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
   const nav: { key: View; label: string; badge?: number }[] = [
     { key: "founder", label: "Founder" },
     { key: "business", label: "Business" },
+    { key: "benita", label: "Ask Benita" },
     { key: "overview", label: "Overview" },
     { key: "people", label: "People" },
     { key: "agents", label: "Agents" },
@@ -191,6 +192,7 @@ function Console({ token, onSignOut }: { token: string; onSignOut: () => void })
         {view === "check" ? <ToCheck api={api} onChanged={loadMetrics} counts={metrics?.toCheck ?? null} /> : null}
         {view === "cards" ? <Cards api={api} /> : null}
         {view === "health" ? <HealthView api={api} range={range} /> : null}
+        {view === "benita" ? <BenitaAdvisor api={api} /> : null}
         {view === "try" ? <TryWisdom api={api} /> : null}
       </main>
     </div>
@@ -289,6 +291,73 @@ function BenitaPanel({ benita }: { benita: NonNullable<Metrics["benita"]> }) {
 type ChatLine = { from: "you" | "wisdom"; text: string; buttons?: string[]; ms?: number };
 
 /** Talk to Wisdom in the browser: the same pipeline and data as WhatsApp, on a private test number. */
+const BENITA_STARTERS = [
+  "I want to start a business in Harare. What would you advise?",
+  "What are people searching for that nobody offers?",
+  "What does a 2 bedroom house rent for in Avondale?",
+  "What is a Honda Fit selling for right now?",
+  "What news should a business owner know today?",
+  "Which trades look crowded in Bulawayo?",
+];
+
+/** TrustHub's own business intelligence, answered from everything Benita and Connect hold. */
+function BenitaAdvisor({ api }: { api: Api }) {
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<{ question: string; city: string | null; surface: string; created_at: string }[]>([]);
+  const loadRecent = useCallback(async () => {
+    const found = await api<{ recent: typeof recent }>("/api/benita/ask?recent=1").catch(() => null);
+    if (found) setRecent(found.recent);
+  }, [api]);
+  useEffect(() => { void loadRecent(); }, [loadRecent]);
+
+  async function send(message: string) {
+    const said = message.trim();
+    if (said.length < 3 || busy) return;
+    const history = lines.slice(-4).map((line) => ({ role: line.from === "you" ? "user" : "benita", body: line.text }));
+    setBusy(true); setError(null); setText("");
+    setLines((current) => [...current, { from: "you", text: said }]);
+    try {
+      const started = await api<{ id: string }>("/api/benita/ask", { method: "POST", body: JSON.stringify({ question: said, history }) });
+      for (let tries = 0; tries < 40; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        const state = await api<{ status: string; answer: string | null }>(`/api/benita/ask?id=${started.id}`).catch(() => null);
+        if (state?.answer) { setLines((current) => [...current, { from: "wisdom", text: state.answer as string }]); return; }
+        if (state?.status === "failed") break;
+      }
+      setError("Benita couldn't answer just now. Please try again.");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Benita couldn't answer just now.");
+    } finally { setBusy(false); void loadRecent(); }
+  }
+
+  return (
+    <>
+      <div className={styles.head}><div><h1>Ask Benita</h1><p className={styles.muted}>Our own business intelligence: real prices, demand, businesses, jobs, news and reviews. Answers can take about 30 seconds, and you can leave this screen while she works.</p></div></div>
+      <section className={styles.panel}>
+        <div className={styles.chat} aria-live="polite">
+          {lines.length === 0 ? <p className={styles.muted}>Ask anything about business in Zimbabwe, or tap a question below.</p> : null}
+          {lines.map((line, index) => <div key={index} className={line.from === "you" ? styles.bubbleYou : styles.bubbleWisdom}><div className={styles.bubbleText}>{line.text}</div></div>)}
+          {busy ? <div className={styles.bubbleWisdom}><div className={styles.bubbleText}>Benita is reading the data…</div></div> : null}
+        </div>
+        {error ? <p className={styles.error} role="alert">{error}</p> : null}
+        <form className={styles.chatForm} onSubmit={(event) => { event.preventDefault(); void send(text); }}>
+          <input className={styles.chatInput} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ask Benita" aria-label="Question" maxLength={800} />
+          <button type="submit" className={styles.primarySmall} disabled={busy || text.trim().length < 3}>Ask</button>
+        </form>
+        <div className={styles.tags}>{BENITA_STARTERS.map((example) => <button type="button" key={example} className={styles.tag} onClick={() => void send(example)} disabled={busy}>{example}</button>)}</div>
+      </section>
+      <section className={styles.panel}>
+        <h2>What people are asking</h2>
+        <p className={styles.muted}>Questions from the app, so you can see what people want to know.</p>
+        {recent.length === 0 ? <p className={styles.empty}>No questions yet.</p> : recent.map((item) => <div key={`${item.created_at}-${item.question}`} className={styles.item}><div className={styles.itemText}><b>{item.question}</b><span>{[item.surface === "admin" ? "You" : "App", item.city, new Date(item.created_at).toLocaleString()].filter(Boolean).join(" · ")}</span></div></div>)}
+      </section>
+    </>
+  );
+}
+
 function TryWisdom({ api }: { api: Api }) {
   const [phone, setPhone] = useState(() => `+2637000${String(Math.floor(10000 + Math.random() * 89999))}`);
   const [lines, setLines] = useState<ChatLine[]>([]);
@@ -307,7 +376,8 @@ function TryWisdom({ api }: { api: Api }) {
       const reply = await api<{ reply: string; buttons: string[]; list: string[]; ms: number }>("/api/admin/simulate", { method: "POST", body: JSON.stringify({ phoneNumber: phone, text: said }) });
       setLines((current) => [...current, { from: "wisdom", text: reply.reply, buttons: [...(reply.buttons ?? []), ...(reply.list ?? [])], ms: reply.ms }]);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Wisdom could not answer just now.");
+      const message = failure instanceof Error ? failure.message : "";
+      setError(/load failed|failed to fetch|network/i.test(message) ? "Your connection dropped while Wisdom was thinking. Deep questions can take about 30 seconds. Please try again and keep this screen open." : message || "Wisdom could not answer just now.");
     } finally { setBusy(false); }
   }
 

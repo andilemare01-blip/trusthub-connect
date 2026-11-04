@@ -678,7 +678,7 @@ function viewToday(v){
 /* ---------- BENITA: a business advisor that knows this business's own numbers ---------- */
 function viewBenita(v){
   const d = S.d, ai = d.ai_insight, auto = d.auto_insight, sum = ai?.summary, x = S.x || {}, chat = x.ai?.ask || [], on = !!x.ai?.auto_reply;
-  const starters = ["What should I fix first?", "Why are customers unhappy?", "How can I get more reviews?", "What should I post this week?"];
+  const starters = ["What should I fix first?", "How can I get more reviews?", "What are people searching for near me?", "What news affects my business today?", "What do similar businesses charge?", "What should I post this week?"];
   v.innerHTML = `
     <section class="panel stack"><div class="spread"><div><span class="eyebrow">Ask Benita</span><h2 style="margin-top:4px">Your business advisor</h2></div><span class="tag good">1 token a question</span></div>
       <p class="muted" style="margin:0;font-size:14px">She has read your reviews, your page, what people search for nearby, and today's news.</p>

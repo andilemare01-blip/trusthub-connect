@@ -28,8 +28,8 @@ function systemPrompt(assistantName: string): string {
   ].join(" ");
 }
 
-export function createDeepQuestionAnswerer(gateway: Pick<AiGateway, "complete">, store: ConnectStore): DeepQuestionAnswerer {
-  return async (question, city, key, assistantName = "Wisdom") => {
+/** Everything TrustHub and Benita hold that bears on a question. Wisdom, the app, the owner's page and admin all read this. */
+export async function gatherAskData(store: ConnectStore, question: string, city: string | null) {
     const words = keywords(question);
     const [pulse, listings, businesses, benita, facts, news, signals] = await Promise.all([
       city ? store.areaPulse(city, 30).catch(() => null) : Promise.resolve(null),
@@ -51,6 +51,12 @@ export function createDeepQuestionAnswerer(gateway: Pick<AiGateway, "complete">,
       townSignals: signals,
       publicFacts: facts.map((fact) => ({ fact: fact.label, value: fact.value ?? fact.valueText, unit: fact.unit, currency: fact.currency, asOf: fact.effectiveFrom, source: fact.sourceKey })),
     };
+    return data;
+}
+
+export function createDeepQuestionAnswerer(gateway: Pick<AiGateway, "complete">, store: ConnectStore): DeepQuestionAnswerer {
+  return async (question, city, key, assistantName = "Wisdom") => {
+    const data = await gatherAskData(store, question, city);
     const result = await gateway.complete({
       key: `${key}:deep_question`,
       purpose: "deep_question",

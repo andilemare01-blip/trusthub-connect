@@ -243,3 +243,39 @@ declare v_def text := pg_get_functiondef('public.app_pulse(text)'::regprocedure)
 begin
   execute replace(v_def, $q$l.status = 'pending'$q$, $q$l.status in ('pending', 'approved')$q$);
 end $$;
+
+-- Questions asked of Benita. The server keeps working if the phone's connection drops.
+create table public.benita_questions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null,
+  surface text not null default 'app' check (surface in ('app', 'admin')),
+  question text not null check (char_length(question) between 3 and 800),
+  city text,
+  answer text,
+  status text not null default 'working' check (status in ('working', 'done', 'failed')),
+  created_at timestamptz not null default now(),
+  answered_at timestamptz
+);
+create index benita_questions_user on public.benita_questions(user_id, created_at desc);
+alter table public.benita_questions enable row level security;
+revoke all on public.benita_questions from anon, authenticated;
+
+create function public.benita_market_numbers(p_city text default null) returns json
+language sql stable security definer set search_path = public, pg_temp as $$
+  with place as (select nullif(trim(coalesce(p_city, '')), '') as city)
+  select json_build_object(
+    'directory', (select json_build_object('businesses', count(*)) from businesses b, place where place.city is null or lower(b.city) = lower(place.city)),
+    'businessesByTrade', (select coalesce(json_agg(x), '[]') from (
+      select app_trade(b.category) as trade, count(*) as businesses from businesses b, place
+      where b.category is not null and (place.city is null or lower(b.city) = lower(place.city))
+      group by 1 order by 2 desc limit 12) x),
+    'listings', (select coalesce(json_agg(x), '[]') from (
+      select l.category, count(*) as total, round(percentile_cont(0.5) within group (order by l.price_min))::int as median_usd
+      from trusthub_connect_listings l, place
+      where l.status in ('pending', 'approved') and l.currency = 'USD' and l.price_min > 0
+        and (place.city is null or lower(l.city) = lower(place.city)) group by 1 order by 2 desc limit 6) x),
+    'reviews', (select json_build_object('total', count(*), 'average', round(avg(v.rating)::numeric, 1))
+      from reviews v join businesses b on b.id = v.business_id_uuid, place where place.city is null or lower(b.city) = lower(place.city))
+  );
+$$;
+revoke all on function public.benita_market_numbers(text) from public, anon, authenticated;

@@ -75,10 +75,10 @@ const VOICE = "You are Benita, the AI business advisor inside TrustHub, for smal
 
 export const PRODUCTS_LINE = "TrustHub can build, and owners can ask an agent about: digital menu or price list (from $10), Google Maps setup (from $10), flyers and social posts (from $10), booking or order form (from $20), website with domain (from $30), online catalog (from $40), loyalty card (from $15), WhatsApp automation (from $50). Mention one only when it truly solves what was asked.";
 
-export function askPrompt(context: BenitaContext, history: { role: string; body: string }[], question: string): { system: string; user: string } {
+export function askPrompt(context: BenitaContext, history: { role: string; body: string }[], question: string, market?: unknown): { system: string; user: string } {
   return {
-    system: `${VOICE} Answer the owner's question in under 150 words, with concrete next steps. ${PRODUCTS_LINE}`,
-    user: `<data>\n${brief(context)}\n</data>\n\n${history.slice(-6).map((item) => `${item.role === "owner" ? "Owner" : "Benita"}: ${item.body.slice(0, 400)}`).join("\n")}\nOwner: ${question.slice(0, 800)}`,
+    system: `${VOICE} Answer the owner's question in under 150 words, with concrete next steps. When market data is given, use its real prices, demand, listings and news, and say they are asking prices or headlines, not guarantees. ${PRODUCTS_LINE}`,
+    user: `<data>\n${brief(context)}\n${market ? `Market data: ${JSON.stringify(market).slice(0, 7000)}\n` : ""}</data>\n\n${history.slice(-6).map((item) => `${item.role === "owner" ? "Owner" : "Benita"}: ${item.body.slice(0, 400)}`).join("\n")}\nOwner: ${question.slice(0, 800)}`,
   };
 }
 

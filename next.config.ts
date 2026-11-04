@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/whatsapp/webhook": ["./docs/TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md"],
     "/api/dev/whatsapp/send": ["./docs/TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md"],
+    "/api/benita/ask": ["./docs/TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md"],
+    "/api/business/benita": ["./docs/TRUSTHUB_WISDOM_CONVERSATION_LIBRARY.md"],
   },
 };
 

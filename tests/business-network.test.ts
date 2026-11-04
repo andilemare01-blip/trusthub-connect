@@ -108,3 +108,26 @@ test("Benita answers from the data, and still answers from it when the AI fails"
   const fallback = await askAdvisor({ db, store, city: "Harare", question: "I want to start a business", key: "k2", gateway: { complete: async () => ({ ok: false, reason: "timeout" }) } });
   assert.ok(fallback.length > 20);
 });
+
+test("Benita greets people, chats, and only reads the data when a question needs it", async () => {
+  const { askAdvisor, needsData, quickReply } = await import("../lib/benita/advisor.ts");
+  const { InMemoryConnectStore } = await import("../lib/connect/store.ts");
+  const store = new InMemoryConnectStore();
+  const db = { from: () => { throw new Error("unused"); } } as never;
+  for (const hello of ["Hi Benita", "hi", "Hello, Benita!", "Benita", "Good morning Benita"]) assert.match(quickReply(hello, "Miss Tae") ?? "", /I'm Benita/);
+  assert.match(quickReply("hi", "Andile Mare") ?? "", /Hello, Andile!/);
+  assert.equal(quickReply("I want to start a bakery"), null);
+  assert.equal(needsData("What is the capital of France?"), false);
+  assert.equal(needsData("How much is rent in Avondale?"), true);
+  let system = "";
+  let user = "";
+  const reply = await askAdvisor({ db, store, city: "Harare", question: "Tell me something nice about the moon", key: "k3", gateway: { complete: async (request) => { system = request.system; user = request.user; return { ok: true, text: "It's lovely." }; } } });
+  assert.equal(reply, "It's lovely.");
+  assert.match(system, /general knowledge/);
+  assert.doesNotMatch(user, /TrustHub data/);
+  let tries = 0;
+  const retried = await askAdvisor({ db, store, city: "Harare", question: "Tell me about the moon", key: "k4", gateway: { complete: async () => { tries += 1; return tries === 1 ? { ok: false, reason: "empty" } : { ok: true, text: "Second try." }; } } });
+  assert.equal(retried, "Second try.");
+  const failed = await askAdvisor({ db, store, city: "Harare", question: "Tell me about the moon", key: "k5", gateway: { complete: async () => ({ ok: false, reason: "timeout" }) } });
+  assert.doesNotMatch(failed, /haven't seen anything/);
+});

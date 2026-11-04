@@ -9,7 +9,7 @@ import { AiGateway } from "@/lib/ai/gateway";
 import { RuntimeEventAiSpendLedger } from "@/lib/ai/spend-ledger";
 import { askPrompt, marketPrompt, parsePost, parseReport, postPrompt, replyPrompt, reportPrompt, type BenitaContext } from "@/lib/business/benita";
 import { TOKEN_COST } from "@/lib/business/catalog";
-import { gatherAdvisorData } from "@/lib/benita/advisor";
+import { gatherAdvisorData, quickReply } from "@/lib/benita/advisor";
 import { parsePlace } from "@/lib/connect/parse";
 import { SupabaseConnectStore } from "@/lib/connect/supabase-store";
 import type { SupabaseDataClient } from "@/lib/supabase/data-client";
@@ -29,8 +29,17 @@ export async function POST(request: NextRequest) {
   if (!action || ((action === "ask" || action === "post") && input.length < 2)) return NextResponse.json({ error: "Unknown request." }, { status: 400, headers: noStore });
   const status = readAiConfig();
   if (!status.enabled) return NextResponse.json({ error: "Benita isn't switched on yet." }, { status: 503, headers: noStore });
+  // A greeting doesn't cost a credit or wait for the AI.
+  if (action === "ask") {
+    const quick = quickReply(input);
+    if (quick) {
+      await call(owner.db, "biz_ask_add", { p_business: owner.businessId, p_role: "owner", p_body: input });
+      await call(owner.db, "biz_ask_add", { p_business: owner.businessId, p_role: "benita", p_body: quick });
+      return NextResponse.json({ answer: quick, tokens: await call<number>(owner.db, "biz_tokens", { p_business: owner.businessId }) }, { headers: noStore });
+    }
+  }
   const cost = TOKEN_COST[action];
-  const ai = new AiGateway({ enabled: true, config: { ...status.config, maxOutputTokens: 1500, timeoutMs: 20000 } }, new RuntimeEventAiSpendLedger(owner.db as unknown as SupabaseDataClient));
+  const ai = new AiGateway({ enabled: true, config: { ...status.config, maxOutputTokens: 3000, timeoutMs: 20000 } }, new RuntimeEventAiSpendLedger(owner.db as unknown as SupabaseDataClient));
   let charged = false;
   try {
     const context = await call<BenitaContext>(owner.db, "biz_benita_context", { p_business: owner.businessId });

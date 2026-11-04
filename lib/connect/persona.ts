@@ -23,10 +23,12 @@ export const ASSISTANT_STYLE: Record<string, AssistantStyle> = {
   Grace: { tone: "gracious and lightly teasing", sorry: "Grace is a virtue, but understanding that message is beyond me.", person: "a gracious, well-connected businesswoman who knows who's who", signature: "Let's find you something good ✨", handover: "the classy part of the day starts now" },
 };
 
+const BENITA_STYLE: AssistantStyle = { tone: "warm, sharp and lightly witty", sorry: "That one slipped past me, and I hate when that happens.", person: "a well-connected Zimbabwean business advisor who loves a good chat and knows what things really cost", signature: "Let's get you sorted.", handover: "" };
+
 const DEFAULT_STYLE: AssistantStyle = { tone: "warm and witty", sorry: "I didn't quite get that.", person: "a friendly local helper", signature: "", handover: "" };
 
 export function styleFor(name: string): AssistantStyle {
-  return ASSISTANT_STYLE[name] ?? DEFAULT_STYLE;
+  return name === "Benita" ? BENITA_STYLE : ASSISTANT_STYLE[name] ?? DEFAULT_STYLE;
 }
 
 /** What to say when nothing matched, with the way forward in the same message. */

@@ -9,6 +9,9 @@ import { AiGateway } from "@/lib/ai/gateway";
 import { RuntimeEventAiSpendLedger } from "@/lib/ai/spend-ledger";
 import { askPrompt, marketPrompt, parsePost, parseReport, postPrompt, replyPrompt, reportPrompt, type BenitaContext } from "@/lib/business/benita";
 import { TOKEN_COST } from "@/lib/business/catalog";
+import { gatherAdvisorData } from "@/lib/benita/advisor";
+import { parsePlace } from "@/lib/connect/parse";
+import { SupabaseConnectStore } from "@/lib/connect/supabase-store";
 import type { SupabaseDataClient } from "@/lib/supabase/data-client";
 import { randomUUID } from "node:crypto";
 
@@ -42,7 +45,10 @@ export async function POST(request: NextRequest) {
     if (action === "post") prompt = postPrompt(context, input);
     if (action === "ask") {
       const saved = await call<{ ask: { role: string; body: string }[] }>(owner.db, "biz_ai_get", { p_business: owner.businessId });
-      prompt = askPrompt(context, saved.ask, input);
+      // The same market knowledge the app and admin use, for this business's town.
+      const store = new SupabaseConnectStore(owner.db);
+      const market = await gatherAdvisorData(owner.db, store, input, parsePlace(input).city ?? context.city ?? null).catch(() => null);
+      prompt = askPrompt(context, saved.ask, input, market);
     }
     const left = await call<number>(owner.db, "biz_tokens_spend", { p_business: owner.businessId, p_cost: cost, p_reason: action });
     charged = true;

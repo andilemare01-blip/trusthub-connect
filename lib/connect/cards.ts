@@ -23,7 +23,11 @@ export interface LandingCard {
   code: string;
   status: CardSummary["status"];
   business: { id: string; name: string; category: string | null; area: string | null; city: string | null; reviewsCount: number } | null;
+  /** "Did you know" facts written by the owner. */
+  facts: BusinessFact[];
 }
+
+export interface BusinessFact { id: string; text: string }
 
 type Row = Record<string, unknown>;
 const CODE = /^TH-\d{4,6}$/;
@@ -47,20 +51,32 @@ export async function getLandingCard(db: ConnectDbClient, raw: string): Promise<
   if (!card) return null;
   const businessId = str(card.business_id);
   const business = businessId ? list(await db.from("businesses").select("id,name,category,area,city,reviews_count").eq("id", businessId).limit(1), "Read card business")[0] : null;
+  const facts = businessId ? await liveFacts(db, businessId).catch(() => []) : [];
   return {
+    facts,
     code,
     status: String(card.status) as LandingCard["status"],
     business: business ? { id: String(business.id), name: String(business.name ?? ""), category: str(business.category), area: str(business.area), city: str(business.city), reviewsCount: Number(business.reviews_count) || 0 } : null,
   };
 }
 
-/** Counts one opening of the card link. Link-preview robots are not people, so they are skipped. */
-export async function recordCardTap(db: ConnectDbClient, code: string, channel: "nfc" | "qr" | "link", userAgent: string | null): Promise<void> {
-  if (userAgent && /bot|crawler|spider|preview|facebookexternalhit|whatsapp\/|telegrambot|slackbot|discordbot/i.test(userAgent)) return;
+/** The owner's live "Did you know" facts, newest first. Owners can keep three on show. */
+export async function liveFacts(db: ConnectDbClient, businessId: string): Promise<BusinessFact[]> {
+  const rows = list(await db.from("biz_announcements").select("id,title").eq("business_id", businessId).eq("kind", "fact").eq("is_active", true).order("created_at", { ascending: false }).limit(3), "Read facts");
+  return rows.map((row) => ({ id: String(row.id), text: String(row.title ?? "") })).filter((fact) => fact.text);
+}
+
+/**
+ * Counts one opening of the card link and returns its one-use visit token, which
+ * lets the app save one verified review. Link-preview robots are not people, so
+ * they are skipped and get no token.
+ */
+export async function recordCardTap(db: ConnectDbClient, code: string, channel: "nfc" | "qr" | "link", userAgent: string | null): Promise<string | null> {
+  if (userAgent && /bot|crawler|spider|preview|facebookexternalhit|whatsapp\/|telegrambot|slackbot|discordbot/i.test(userAgent)) return null;
   const card = list(await db.from("connect_review_cards").select("id").eq("code", code).limit(1), "Find card")[0];
-  if (!card) return;
-  const result = await db.from("connect_card_taps").insert({ card_id: String(card.id), channel });
-  if (result.error) throw new Error("Record card tap failed.");
+  if (!card) return null;
+  const tap = list(await db.from("connect_card_taps").insert({ card_id: String(card.id), channel }).select("visit_token").single(), "Record card tap")[0];
+  return tap ? str(tap.visit_token) : null;
 }
 
 /** Every card with its taps, reviews and the number of people whose first-ever review came through it. */
@@ -72,19 +88,20 @@ export async function listCards(db: ConnectDbClient): Promise<CardSummary[]> {
   const [businesses, taps, reviews] = await Promise.all([
     businessIds.length ? db.from("businesses").select("id,name,area,city").in("id", businessIds).limit(500) : Promise.resolve({ data: [], error: null }),
     db.from("connect_card_taps").select("card_id").in("card_id", cards.map((card) => String(card.id))).limit(50000),
-    db.from("trusthub_connect_reviews").select("card_code,whatsapp_identity_id,created_at").in("card_code", codes).limit(50000),
+    // App, guest and WhatsApp card reviews all land in `reviews`, so it holds the full count for each card.
+    db.from("reviews").select("card_code,user_id,created_at").in("card_code", codes).limit(50000),
   ]);
   const byBusiness = new Map(list(businesses, "Read card businesses").map((row) => [String(row.id), row]));
   const tapCount = new Map<string, number>();
   for (const tap of list(taps, "Count card taps")) tapCount.set(String(tap.card_id), (tapCount.get(String(tap.card_id)) ?? 0) + 1);
   const reviewRows = list(reviews, "Count card reviews");
-  // A "new user" is someone whose first Connect review of all came from this card.
-  const identities = [...new Set(reviewRows.map((row) => row.whatsapp_identity_id).filter((id) => id !== null && id !== undefined).map(String))];
+  // A "new user" is someone whose first review of all came from this card. Guests have no account, so they aren't counted.
+  const identities = [...new Set(reviewRows.map((row) => String(row.user_id ?? "")).filter((id) => id && !id.startsWith("guest:")))];
   const firstReview = new Map<string, string>();
   if (identities.length) {
-    const all = list(await db.from("trusthub_connect_reviews").select("whatsapp_identity_id,card_code,created_at").in("whatsapp_identity_id", identities).order("created_at", { ascending: true }).limit(50000), "Read first reviews");
+    const all = list(await db.from("reviews").select("user_id,card_code,created_at").in("user_id", identities).order("created_at", { ascending: true }).limit(50000), "Read first reviews");
     for (const row of all) {
-      const id = String(row.whatsapp_identity_id);
+      const id = String(row.user_id);
       if (!firstReview.has(id)) firstReview.set(id, String(row.card_code ?? ""));
     }
   }

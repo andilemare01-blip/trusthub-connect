@@ -203,6 +203,7 @@ const live = {
   async rpc(fn, args){ const { data, error } = await sb.rpc(fn, args || {}); if (error) throw new Error(error.message); return data; },
   myBusinesses(){ return this.rpc("biz_my_businesses"); },
   dashboard(b){ return this.rpc("biz_dashboard", { p_business: b }); },
+  customers(b){ return this.rpc("biz_customer_insights", { p_business: b }); },
   find(q, city){ return this.rpc("biz_find", { p_q: q, p_city: city || null }); },
   submitClaim(b, f){ return this.rpc("biz_submit_claim", { p_business: b, p_name: f.name, p_role: f.role, p_phone: f.phone, p_whatsapp: f.whatsapp, p_email: f.email, p_notes: f.notes }); },
   reply(r, body){ return this.rpc("biz_reply", { p_review: r, p_body: body }); },
@@ -298,6 +299,7 @@ const demo = {
   benita(b, action, id, text){ if (action === "ask" || action === "market"){ const answer = action === "market" ? "People near you search most for sadza and takeaway, and you're ahead of two of three similar places on portions. Your two best moves: fix the lunch wait and answer your unhappy reviews." : "Your reviews love the food, but lunch waits and an unanswered EcoCash complaint are costing you. Start by replying to that complaint today, then prepare your top three plates before noon."; if (action === "ask") sample.ask.push({ role:"owner", body:text }, { role:"benita", body:answer }); sample.tokens = Math.max(0, sample.tokens - (action === "ask" ? 1 : 3)); return wait({ answer, tokens: sample.tokens }, 700); } if (action === "post"){ sample.tokens = Math.max(0, sample.tokens - 1); return wait({ post:{ title:"Friday lunch is on!", body:"Hot sadza nehuku, ready when you arrive. Come through this Friday." }, tokens: sample.tokens }, 700); } if (action === "reply") return wait({ draft:"Thank you for telling us, and we're sorry about this. Please WhatsApp us so we can put it right.", tokens: sample.tokens }); sample.tokens = Math.max(0, sample.tokens - 10); return this.aiInsight().then(summary => ({ report: summary.summary, tokens: sample.tokens })); },
   myBusinesses(){ const d = sampleDashboard(); return wait({ is_admin:false, businesses:[ { id:"demo-1", name:sample.biz.name, city:sample.biz.city, category:sample.biz.category, plan:sample.plan, reviews_count:d.stats.reviews, avg_rating:d.stats.avg, unanswered:d.stats.unanswered, unread_chats:d.stats.unread_chats } ], claims:[] }); },
   dashboard(){ return wait(sampleDashboard()); },
+  customers(){ return wait({ taps_30:37, by_channel:{ whatsapp:24, nfc:9, qr:4 }, card_reviews_30:15, verified_30:15, tap_to_review_pct:41, known_customers:42, returning_customers:11, rating_change:0.4, busiest_day:"Saturday", fact_views:96 }); },
   find(q){ const pool = [ { id:"f1", name:"Ndlovu Hardware", category:"Hardware", city:"Bulawayo", area:"CBD", reviews_count:4, claimed:false }, { id:"f2", name:"Glow Salon", category:"Beauty", city:"Harare", area:"Borrowdale", reviews_count:11, claimed:true }, { id:"f3", name:"Masvingo Motors", category:"Car dealer", city:"Masvingo", area:"", reviews_count:2, claimed:false } ]; return wait(pool.filter(b => b.name.toLowerCase().includes(q.toLowerCase()))); },
   submitClaim(){ return wait({ status:"submitted" }); },
   reply(id, body){ const r = sample.reviews.find(x=>x.id===id); r.reply = { body, updated_at: new Date().toISOString() }; return wait({}); },
@@ -355,8 +357,8 @@ async function loadMine(){
   render();
 }
 async function loadDash(){
-  const [d, x] = await Promise.all([S.api.dashboard(S.bizId), S.api.context(S.bizId).catch(() => null)]);
-  S.d = d; S.x = x || { tokens: 0, payments: [], offer: null, websiteFrom: "30" };
+  const [d, x, c] = await Promise.all([S.api.dashboard(S.bizId), S.api.context(S.bizId).catch(() => null), S.api.customers(S.bizId).catch(() => null)]);
+  S.d = d; S.c = c; S.x = x || { tokens: 0, payments: [], offer: null, websiteFrom: "30" };
 }
 async function refresh(){ try { await loadDash(); render(); } catch(e){ toast(e.message); } }
 
@@ -448,7 +450,9 @@ function viewHome(v){
   const worst = d.auto_insight.themes.find(t => t.complaints > t.praise);
   if (worst) todo.push(["warn", `Customers mention: ${worst.label.toLowerCase()}`, worst.fix, "benita"]);
   if (d.scam_watch.reports) todo.push(["bad", `Your number was reported ${d.scam_watch.reports}×`, "Someone flagged your phone number on Trusthub Connect. Contact us to clear it.", "more"]);
-  if (!st.live_announcements) todo.push(["seal", "Post a special", "Live specials show on your Trusthub page and bring people in.", "grow"]);
+  const liveOf = kind => d.announcements.filter(a => a.is_active && (!a.ends_at || new Date(a.ends_at) > new Date()) && (kind === "fact") === (a.kind === "fact"));
+  if (!liveOf("fact").length) todo.push(["seal", "Add a Did you know", "Tell customers what makes you stand out. They see it on your cards, WhatsApp and the app.", "grow"]);
+  if (!liveOf("post").length) todo.push(["seal", "Post a special", "Live specials show on your Trusthub page and bring people in.", "grow"]);
   if (!d.business.phone || !d.business.description) todo.push(["", "Finish your page", "Add your phone, hours and a short description.", "page"]);
   if (d.demand.searches_30) todo.push(["seal", `${d.demand.searches_30} people searched for ${esc(d.demand.category)} near you`, "That was in the last 30 days on Trusthub Connect. Make sure they find you.", "today"]);
   v.innerHTML = `
@@ -463,6 +467,7 @@ function viewHome(v){
       <div class="kpi"><b>${st.reply_rate ?? 0}%</b><span>reviews you replied to</span></div>
       <div class="kpi"><b>${st.card_taps_30}</b><span>review card taps (30d)</span></div>
     </section>
+    ${customersPanel()}
     <section class="panel"><div class="spread"><h2>Do this next</h2><span class="eyebrow">${todo.length} item${todo.length===1?"":"s"}</span></div>
       <div>${todo.map(([c,t,p,go]) => `<div class="todo"><span class="dot ${c}"></span><div><b>${t}</b><p>${p}</p></div><button class="btn ghost sm" data-go="${go}">Open</button></div>`).join("") || '<p class="muted">All caught up. Nice work.</p>'}</div>
     </section>
@@ -582,23 +587,51 @@ async function viewChats(v){
 }
 
 /* ---------- GROW: posts + insights ---------- */
+function customersPanel(){
+  const c = S.c; if (!c) return "";
+  const ch = c.by_channel || {};
+  const channels = [["whatsapp","WhatsApp"],["nfc","card tap"],["qr","QR scan"],["link","link"]].filter(([k]) => ch[k]).map(([k,l]) => `${ch[k]} ${l}`).join(" · ");
+  const change = c.rating_change == null ? "" : c.rating_change > 0 ? `They rate you ${c.rating_change}★ higher than on their first visit.` : c.rating_change < 0 ? `They rate you ${Math.abs(c.rating_change)}★ lower than on their first visit.` : "Their rating has stayed the same.";
+  return `<section class="panel stack"><div class="spread"><h2>Your customers</h2><span class="muted" style="font-size:13px">last 30 days</span></div>
+    <div class="kpis">
+      <div class="kpi"><b>${c.taps_30}</b><span>card opens${channels ? ` · ${channels}` : ""}</span></div>
+      <div class="kpi"><b>${c.tap_to_review_pct ?? 0}%</b><span>of opens became a review</span></div>
+      <div class="kpi"><b>${c.verified_30}</b><span>verified visit reviews</span></div>
+      <div class="kpi"><b>${c.returning_customers}</b><span>customers came back, of ${c.known_customers} known</span></div>
+    </div>
+    <p class="muted" style="margin:0;font-size:14px">${[change, c.busiest_day ? `${esc(c.busiest_day)} is your busiest day for card opens.` : "", c.fact_views ? `Your Did you know was seen ${c.fact_views} times.` : ""].filter(Boolean).join(" ") || "Numbers appear here as customers use your cards."}</p>
+  </section>`;
+}
 const KINDS = { announcement: "Announcement", special: "Special offer", event: "Event", closed: "Closed notice" };
 function viewGrow(v){
   const d = S.d;
+  const facts = d.announcements.filter(a => a.kind === "fact"), liveFacts = facts.filter(a => a.is_active);
+  const annRow = a => { const live = a.is_active && (!a.ends_at || new Date(a.ends_at) > new Date()); return `<div class="review" data-ann="${a.id}">
+        <div class="spread"><span class="tag ${live?"good":""}">${live?"Live":"Off"}${a.kind==="fact"?"":` · ${KINDS[a.kind]||a.kind}`}</span><span class="muted num" style="font-size:12px">${a.views} views</span></div>
+        <b>${esc(a.title)}</b>${a.body?`<div class="muted" style="font-size:14px">${esc(a.body)}</div>`:""}
+        ${a.kind==="fact"?"":`<div class="muted" style="font-size:12px">${a.ends_at ? "Ends " + new Date(a.ends_at).toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "No end date"}</div>`}
+        <div class="row"><button class="btn ghost sm" data-toggle="${live?0:1}">${live?"Turn off":"Turn on"}</button><button class="link" style="color:var(--bad)" data-remove>Delete</button></div></div>`; };
   v.innerHTML = `
+    <section class="panel stack"><div class="spread"><div><span class="eyebrow">Did you know?</span><h2 style="margin-top:4px">What makes you stand out</h2></div><span class="muted num" style="font-size:13px">${liveFacts.length} of 3 live</span></div>
+      <p class="muted" style="margin:0;font-size:14px">One short true fact: your best price, a house special, how long you've been open. Customers see it on your review cards, on WhatsApp and in the app, marked as from the owner.</p>
+      <label>Your fact<input id="factText" maxlength="120" placeholder="e.g. Our sadza plate is the cheapest in Chinhoyi at $2"></label>
+      <div><button class="btn sm" id="addFact">Add it</button></div>
+      <div>${facts.map(annRow).join("")}</div>
+    </section>
     <div class="spread"><div><span class="eyebrow">Grow your business</span><h2 style="margin-top:4px">What we can build for ${esc(d.business.name)}</h2></div></div>
     ${(S.x?.offers||[]).map((o,i) => `<section class="panel stack"><div class="spread"><span class="eyebrow">${esc(o.name)}</span><span class="tag good">from $${o.from}</span></div><h2>${esc(o.hook)}</h2><p class="muted" style="margin:0;font-size:14px">${esc(o.helps)}</p><div class="row"><button class="btn sm seal" data-want="${esc(o.name)}">Chat with an agent</button><button class="btn sm ghost" data-ask="${i}">Ask Benita how it helps me · 1 token</button></div></section>`).join("")}
     <section class="panel stack"><div class="spread"><h2>Posts & specials</h2><button class="btn sm" id="newPost">New post</button></div>
-      <div>${d.announcements.map(a => { const live = a.is_active && (!a.ends_at || new Date(a.ends_at) > new Date()); return `<div class="review" data-ann="${a.id}">
-        <div class="spread"><span class="tag ${live?"good":""}">${live?"Live":"Off"} · ${KINDS[a.kind]||a.kind}</span><span class="muted num" style="font-size:12px">${a.views} views</span></div>
-        <b>${esc(a.title)}</b>${a.body?`<div class="muted" style="font-size:14px">${esc(a.body)}</div>`:""}
-        <div class="muted" style="font-size:12px">${a.ends_at ? "Ends " + new Date(a.ends_at).toLocaleDateString(undefined,{day:"numeric",month:"short"}) : "No end date"}</div>
-        <div class="row"><button class="btn ghost sm" data-toggle="${live?0:1}">${live?"Turn off":"Turn on"}</button><button class="link" style="color:var(--bad)" data-remove>Delete</button></div></div>`; }).join("") || '<p class="muted">No posts yet. A special offer is the quickest way to get people through the door.</p>'}</div>
+      <div>${d.announcements.filter(a => a.kind !== "fact").map(annRow).join("") || '<p class="muted">No posts yet. A special offer is the quickest way to get people through the door.</p>'}</div>
     </section>`;
   v.querySelectorAll("[data-want]").forEach(x => x.onclick = () => openChat("grow", x.dataset.want));
   v.querySelectorAll("[data-ask]").forEach(x => x.onclick = () => { S.draftAsk = S.x.offers[+x.dataset.ask].question; S.tab = "benita"; render(); window.scrollTo(0,0); });
   v.querySelectorAll("[data-up]").forEach(x => x.onclick = () => { S.tab = "plan"; render(); });
   $("#newPost").onclick = () => postSheet();
+  $("#addFact").onclick = async () => {
+    const title = $("#factText").value.trim(); if (!title) return toast("Write your fact first.");
+    if (liveFacts.length >= 3) return toast("You can keep 3 live. Turn one off first.");
+    try { await S.api.announce(S.bizId, { kind: "fact", title, body: "", ends_at: null }); toast("Your Did you know is live"); await refresh(); } catch(x){ toast(x.message); }
+  };
   function postSheet(title, body){ sheet(`<h2>New post</h2>
     <label>Type<select id="pKind">${Object.entries(KINDS).map(([k,l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
     <label>Headline<input id="pTitle" maxlength="120" value="${esc(title||"")}" placeholder="e.g. Free drink with any plate this Friday"></label>

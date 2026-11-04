@@ -7,6 +7,7 @@
 import type { NewsItem, PersonSummary, TownSignals } from "./store.ts";
 import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
+import { liveFacts } from "./cards.ts";
 import { listingPrice, refineListings } from "./store.ts";
 import { benitaFacts, benitaSearch, type BenitaFact, type BenitaQuery, type BenitaResult, type BenitaRpcClient } from "../benita/index.ts";
 
@@ -128,12 +129,25 @@ export class SupabaseConnectStore implements ConnectStore {
     return found[0] ? business(found[0]) : null;
   }
 
-  async lastReviewAt(identityId: string, businessId: string): Promise<string | null> {
+  async recordCardOpen(cardId: string): Promise<void> {
+    const result = await this.db.from("connect_card_taps").insert({ card_id: cardId, channel: "whatsapp" });
+    if (result.error) throw new ConnectStoreError("Record card open", result.error);
+  }
+
+  async businessFacts(businessId: string): Promise<string[]> {
+    if (!UUID.test(businessId)) return [];
+    const facts = await liveFacts(this.db, businessId);
+    await Promise.all(facts.map((fact) => this.db.rpc?.("biz_announcement_seen", { p_id: fact.id })));
+    return facts.map((fact) => fact.text);
+  }
+
+  async lastReview(identityId: string, businessId: string): Promise<{ createdAt: string; rating: number; text: string } | null> {
     if (!UUID.test(businessId)) return null;
-    const found = rows(await this.db.from("trusthub_connect_reviews").select("created_at")
-      .eq("whatsapp_identity_id", identity(identityId)).eq("directory_business_id", businessId)
+    const found = rows(await this.db.from("trusthub_connect_reviews").select("created_at,rating,review_text")
+      .eq("whatsapp_identity_id", identity(identityId)).eq("directory_business_id", businessId).neq("status", "rejected")
       .order("created_at", { ascending: false }).limit(1), "Read previous review");
-    return text(found[0]?.created_at);
+    const latest = found[0];
+    return latest ? { createdAt: String(latest.created_at), rating: Number(latest.rating), text: String(latest.review_text ?? "") } : null;
   }
 
   async searchReviews(query: ReviewQuery): Promise<ReviewItem[]> {
@@ -144,12 +158,12 @@ export class SupabaseConnectStore implements ConnectStore {
         .in("status", ["published", "pending"]).order("created_at", { ascending: false }).limit(300),
       // Reviews written in the TrustHub app. WhatsApp reviews copied into that table are skipped, so nothing shows twice.
       this.db.from("reviews")
-        .select("id,rating,comment,created_at,business_id_uuid")
+        .select("id,rating,comment,created_at,business_id_uuid,verified_visit")
         .not("user_id", "like", "whatsapp:%").not("business_id_uuid", "is", null).order("created_at", { ascending: false }).limit(300),
     ]);
     const reviews = [
       ...rows(connect, "Search reviews").map((row) => ({ id: row.id, rating: row.rating, text: row.review_text, verified: row.verified_visit === true, checked: row.status === "published", createdAt: row.created_at, businessId: row.directory_business_id })),
-      ...rows(app, "Search app reviews").map((row) => ({ id: row.id, rating: row.rating, text: row.comment, verified: false, checked: true, createdAt: row.created_at, businessId: row.business_id_uuid })),
+      ...rows(app, "Search app reviews").map((row) => ({ id: row.id, rating: row.rating, text: row.comment, verified: row.verified_visit === true, checked: true, createdAt: row.created_at, businessId: row.business_id_uuid })),
     ].sort((a, b) => Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt)));
     const ids = [...new Set(reviews.map((row) => String(row.businessId)).filter(Boolean))];
     if (!ids.length) return [];

@@ -79,7 +79,9 @@ test("a review from the menu finds the business, confirms it, saves as pending a
   await say("menu.review");
   await say("Sunny Bakery");
   const again = await say("yes");
-  assert.match(again.reply, /How was \*Sunny Bakery\*\?/);
+  assert.match(again.reply, /Welcome back.*Sunny Bakery/);
+  assert.match(again.reply, /gave 5 stars/);
+  assert.match(again.reply, /How was it this time\?/);
   await say("4");
   const repeat = await say("btn.skip");
   assert.equal(store.reviews.length, 2);
@@ -312,4 +314,23 @@ test("button and list messages keep their line breaks", async () => {
   assert.match(preview.interactive?.body ?? "", /\nItem: \*Samsung A15\*\nPrice: \$120\nWhere: Chinhoyi/);
   const welcome = await say("Hi");
   assert.match(welcome.interactive?.body ?? "", /\n\nWhat would you like to do\?(\n\nP\.S\. What should I call you\? Just type your first name\.)?$/);
+});
+
+test("a card opened on WhatsApp is counted once, and one opened from the web page isn't counted again", async () => {
+  const { store, say } = setup();
+  await say("REVIEW TH-1042");
+  assert.equal(store.cardOpens.length, 1);
+  await say("cancel");
+  await say("REVIEW TH-1042 via page");
+  assert.equal(store.cardOpens.length, 1);
+});
+
+test("the owner's Did you know shows after a review", async () => {
+  const { store, say } = setup();
+  store.ownerFacts.set(store.cards[0].business!.id, ["Our bread is baked at 4am"]);
+  await say("REVIEW TH-1042");
+  await say("5");
+  const saved = await say("btn.skip");
+  assert.match(saved.reply, /Did you know\?\* Our bread is baked at 4am/);
+  assert.match(saved.reply, /From the owner/);
 });

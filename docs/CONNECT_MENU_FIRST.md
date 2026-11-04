@@ -59,5 +59,7 @@ Existing: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `WHATSAPP_*`, `OPENROUTER_API_K
 - Unverified listings and businesses are labelled as unchecked.
 - A typed number only opens the menu when no flow is waiting for an answer, so a rating of "5" stays a rating.
 - People can review a business as often as they like. The free review credit is earned once per business every 30 days.
+- Every card opening carries a one-use visit token (12 hours). In the app it saves one verified review, with or without an account. Guest reviews are saved as `guest:<id>`, so they are on nobody's record.
+- A logged-in or returning WhatsApp customer is greeted with their last visit.
 - Each business has two cards: a WhatsApp card (`wa.me` link) and an app card (`/r/TH-####?to=app`, which goes straight to the app's review page).
 - Every write carries the WhatsApp message id, so a redelivered webhook never saves twice.

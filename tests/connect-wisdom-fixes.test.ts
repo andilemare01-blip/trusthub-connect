@@ -235,3 +235,9 @@ test("reading reviews works through the production wrapper, not only the test st
   assert.match(reply?.reply ?? "", /Lovely staff from the app/);
   assert.match(reply?.reply ?? "", /29 Oct 2026/);
 });
+
+test("a price question searches for the thing, not the question words", async () => {
+  const { keywords } = await import("../lib/connect/parse.ts");
+  assert.deepEqual(keywords("What is a Honda Fit selling for right now?"), ["fit", "honda"].sort((a, b) => (a === "honda" ? -1 : b === "honda" ? 1 : 0)));
+  assert.deepEqual(keywords("How much does a Toyota Hilux cost today?"), ["toyota", "hilux"]);
+});

@@ -279,6 +279,29 @@ export async function decide(db: ConnectDbClient, kind: QueueKind, id: string, a
   await update("trusthub_connect_businesses", { status: "approved", updated_at: now, verification_notes: "Approved by a TrustHub admin and added to the directory." });
 }
 
+/**
+ * Approves everything waiting in one list. Scam reports are left out on purpose:
+ * confirming one accuses a real phone number, so each needs its own look.
+ */
+export async function approveAll(db: ConnectDbClient, kind: QueueKind): Promise<number> {
+  if (kind === "listings") {
+    const result = await db.rpc?.("ceo_listings_approve_all", {});
+    if (!result || result.error) throw new Error("Approve listings failed.");
+    return Number(result.data) || 0;
+  }
+  if (kind === "reviews") {
+    const waiting = rows(await db.from("trusthub_connect_reviews").select("id").eq("status", "pending").limit(5000), "Read waiting reviews");
+    for (const row of waiting) await decide(db, kind, String(row.id), true);
+    return waiting.length;
+  }
+  if (kind === "businesses") {
+    const waiting = rows(await db.from("trusthub_connect_businesses").select("id").eq("status", "pending").limit(500), "Read waiting businesses");
+    for (const row of waiting) await decide(db, kind, String(row.id), true);
+    return waiting.length;
+  }
+  throw new Error("Unknown decision.");
+}
+
 /** Business search for the card manager's picker. */
 export async function searchBusinessesForAdmin(db: ConnectDbClient, query: string) {
   const term = query.trim().replace(/[\\%_]/g, "\\$&").slice(0, 80);

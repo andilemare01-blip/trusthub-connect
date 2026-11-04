@@ -145,7 +145,8 @@ function sourceHost(url: string | null | undefined): string | null {
 
 function listingLine(listing: Listing, index: number): string {
   const web = sourceHost(listing.sourceUrl);
-  const checked = listing.status === "approved" ? "Checked" : web ? `Found online (${web}), not yet checked` : "Not yet checked";
+  // A web listing is never called Checked: approving it means it may be shown, not that anyone verified the seller.
+  const checked = web ? (listing.status === "approved" ? `Found online (${web})` : `Found online (${web}), not yet checked`) : listing.status === "approved" ? "Checked" : "Not yet checked";
   const facts = [listing.priceText, [listing.area, listing.city].filter(Boolean).join(", ") || null].filter(Boolean).join(" · ");
   const contact = waLink(listing.phone);
   return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `WhatsApp: ${contact} · ` : ""}${checked}`;

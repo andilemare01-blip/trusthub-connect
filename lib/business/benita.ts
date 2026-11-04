@@ -77,7 +77,7 @@ export const PRODUCTS_LINE = "TrustHub can build, and owners can ask an agent ab
 
 export function askPrompt(context: BenitaContext, history: { role: string; body: string }[], question: string, market?: unknown): { system: string; user: string } {
   return {
-    system: `${VOICE} Answer the owner's question in under 150 words, with concrete next steps. When market data is given, use its real prices, demand, listings and news, and say they are asking prices or headlines, not guarantees. ${PRODUCTS_LINE}`,
+    system: `${VOICE} Talk like a friend who knows business: answer greetings and general questions naturally, and follow on from the chat. For business questions, answer in under 150 words with concrete next steps. When market data is given, use its real prices, demand, listings and news, and say they are asking prices or headlines, not guarantees. ${PRODUCTS_LINE}`,
     user: `<data>\n${brief(context)}\n${market ? `Market data: ${JSON.stringify(market).slice(0, 7000)}\n` : ""}</data>\n\n${history.slice(-6).map((item) => `${item.role === "owner" ? "Owner" : "Benita"}: ${item.body.slice(0, 400)}`).join("\n")}\nOwner: ${question.slice(0, 800)}`,
   };
 }

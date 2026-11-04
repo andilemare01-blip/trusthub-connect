@@ -320,7 +320,8 @@ function BenitaAdvisor({ api }: { api: Api }) {
     setBusy(true); setError(null); setText("");
     setLines((current) => [...current, { from: "you", text: said }]);
     try {
-      const started = await api<{ id: string }>("/api/benita/ask", { method: "POST", body: JSON.stringify({ question: said, history }) });
+      const started = await api<{ id?: string; answer?: string }>("/api/benita/ask", { method: "POST", body: JSON.stringify({ question: said, history }) });
+      if (started.answer) { setLines((current) => [...current, { from: "wisdom", text: started.answer as string }]); return; }
       for (let tries = 0; tries < 40; tries += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2500));
         const state = await api<{ status: string; answer: string | null }>(`/api/benita/ask?id=${started.id}`).catch(() => null);

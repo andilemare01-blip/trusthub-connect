@@ -3,7 +3,7 @@ import { after, NextRequest, NextResponse } from "next/server";
 import { AiGateway } from "@/lib/ai/gateway";
 import { readAiConfig } from "@/lib/ai/config";
 import { RuntimeEventAiSpendLedger } from "@/lib/ai/spend-ledger";
-import { askAdvisor, type AdvisorGateway } from "@/lib/benita/advisor";
+import { askAdvisor, quickReply, type AdvisorGateway } from "@/lib/benita/advisor";
 import { noStore, serverDb, signedInUser } from "@/lib/business/server";
 import { parsePlace } from "@/lib/connect/parse";
 import { SupabaseConnectStore } from "@/lib/connect/supabase-store";
@@ -40,9 +40,19 @@ export function OPTIONS() {
 type Row = Record<string, unknown>;
 const rowsOf = (result: { data: unknown }) => (Array.isArray(result.data) ? result.data as Row[] : []);
 
+/** Lets automated checks exercise the real path, using the same private key as the Wisdom simulator. */
+const TEST_USER = "00000000-0000-4000-8000-00000000be01";
+async function testKeyMatches(request: NextRequest, db: NonNullable<ReturnType<typeof serverDb>>) {
+  const given = request.headers.get("x-trusthub-test-key");
+  if (!given || given.length < 24) return false;
+  const value = rowsOf(await db.from("benita_settings").select("value").eq("key", "simulator_key").limit(1))[0]?.value;
+  return typeof value === "string" && value === given;
+}
+
 async function who(request: NextRequest) {
   const db = serverDb();
   if (!db) return null;
+  if (await testKeyMatches(request, db)) return { db, userId: TEST_USER, isAdmin: true };
   const userId = await signedInUser(request);
   if (!userId) return null;
   const admin = rowsOf(await db.from("admin_users").select("user_id").eq("user_id", userId).limit(1));
@@ -58,6 +68,12 @@ export async function POST(request: NextRequest) {
   const status = readAiConfig();
   if (!status.enabled) return reply({ error: "Benita isn't switched on yet." }, 503);
   const { db, userId, isAdmin } = person;
+  const profile = rowsOf(await db.from("profiles").select("name").eq("user_id", userId).limit(1))[0];
+  const personName = typeof profile?.name === "string" ? profile.name : null;
+
+  // "Hi" gets an instant answer and doesn't use up a free question.
+  const quick = quickReply(question, personName);
+  if (quick) return reply({ answer: quick });
 
   if (!isAdmin) {
     const today = new Date(); today.setUTCHours(0, 0, 0, 0);
@@ -78,11 +94,11 @@ export async function POST(request: NextRequest) {
     const finish = (answer: string | null) => db.from("benita_questions").update({ answer, status: answer ? "done" : "failed", answered_at: new Date().toISOString() }).eq("id", id);
     try {
       const gateway = new AiGateway(
-        { enabled: true, config: { ...status.config, maxOutputTokens: 1200, timeoutMs: 25000 } },
+        { enabled: true, config: { ...status.config, maxOutputTokens: 3000, timeoutMs: 22000 } },
         new RuntimeEventAiSpendLedger(db as unknown as SupabaseDataClient),
       );
       const store = new SupabaseConnectStore(db);
-      await finish(await askAdvisor({ db, store, gateway: gateway as unknown as AdvisorGateway, question, city, history, key: randomUUID() }));
+      await finish(await askAdvisor({ db, store, gateway: gateway as unknown as AdvisorGateway, question, city, history, personName, key: randomUUID() }));
     } catch (error) {
       console.error("benita ask", error instanceof Error ? error.message : "unknown");
       await finish(null);

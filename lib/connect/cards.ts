@@ -129,7 +129,17 @@ export async function updateCard(db: ConnectDbClient, cardId: string, change: { 
   if (result.error) throw new Error("Update card failed.");
 }
 
-export function cardLinks(baseUrl: string, code: string): { nfc: string; qr: string } {
+/**
+ * The links for one card. `whatsapp` (only when the TrustHub WhatsApp number is
+ * known) opens WhatsApp directly with "REVIEW TH-####" typed in, so a tap works
+ * on a WhatsApp-only bundle with no browser data. `nfc` and `qr` open the web page.
+ */
+export function cardLinks(baseUrl: string, code: string, whatsappNumber?: string | null): { nfc: string; qr: string; whatsapp?: string } {
   const base = baseUrl.replace(/\/+$/, "");
-  return { nfc: `${base}/r/${code}?s=nfc`, qr: `${base}/r/${code}?s=qr` };
+  const digits = (whatsappNumber ?? "").replace(/\D/g, "");
+  return {
+    nfc: `${base}/r/${code}?s=nfc`,
+    qr: `${base}/r/${code}?s=qr`,
+    ...(digits.length >= 8 ? { whatsapp: `https://wa.me/${digits}?text=${encodeURIComponent(`REVIEW ${code}`)}` } : {}),
+  };
 }

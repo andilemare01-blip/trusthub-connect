@@ -10,6 +10,9 @@ function baseUrl(request: NextRequest): string {
   return process.env.PUBLIC_BASE_URL?.trim() || request.nextUrl.origin;
 }
 
+/** The TrustHub Connect WhatsApp number, so cards can carry a direct WhatsApp link. */
+const whatsappNumber = () => process.env.TRUSTHUB_WHATSAPP_NUMBER ?? null;
+
 function failure(error: unknown, fallback: string) {
   const message = error instanceof Error && /^(Choose|That business|Unknown)/.test(error.message) ? error.message : fallback;
   return NextResponse.json({ error: message }, { status: message === fallback ? 500 : 400, headers: noStore });
@@ -21,7 +24,7 @@ export async function GET(request: NextRequest) {
   try {
     const cards = await listCards(admin.db);
     const base = baseUrl(request);
-    return NextResponse.json({ cards: cards.map((card) => ({ ...card, links: cardLinks(base, card.code) })) }, { headers: noStore });
+    return NextResponse.json({ cards: cards.map((card) => ({ ...card, links: cardLinks(base, card.code, whatsappNumber()) })) }, { headers: noStore });
   } catch (error) { return failure(error, "The cards could not be loaded."); }
 }
 
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null) as { businessId?: unknown; note?: unknown } | null;
   try {
     const card = await createCard(admin.db, typeof body?.businessId === "string" ? body.businessId : "", admin.userId, typeof body?.note === "string" ? body.note : null);
-    return NextResponse.json({ card: { ...card, links: cardLinks(baseUrl(request), card.code) } }, { headers: noStore });
+    return NextResponse.json({ card: { ...card, links: cardLinks(baseUrl(request), card.code, whatsappNumber()) } }, { headers: noStore });
   } catch (error) { return failure(error, "The card could not be created."); }
 }
 

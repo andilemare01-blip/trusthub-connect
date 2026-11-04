@@ -65,7 +65,7 @@ test("an unknown or inactive card falls back to asking for the business name", a
   assert.equal(result.conversation.connect?.step, "which");
 });
 
-test("a review from the menu finds the business, confirms it, saves as pending and blocks a repeat", async () => {
+test("a review from the menu finds the business, confirms it, saves as pending and allows a repeat without a second credit", async () => {
   const { store, say } = setup();
   await say("2");
   const found = await say("Sunny Bakery, Chinhoyi");
@@ -78,9 +78,14 @@ test("a review from the menu finds the business, confirms it, saves as pending a
   assert.equal(store.reviews[0].text, "");
   await say("menu.review");
   await say("Sunny Bakery");
-  const repeat = await say("yes");
-  assert.match(repeat.reply, /You already reviewed \*Sunny Bakery\*/);
-  assert.equal(store.reviews.length, 1);
+  const again = await say("yes");
+  assert.match(again.reply, /How was \*Sunny Bakery\*\?/);
+  await say("4");
+  const repeat = await say("btn.skip");
+  assert.equal(store.reviews.length, 2);
+  assert.match(repeat.reply, /Review credits are limited to one per business every 30 days/);
+  assert.doesNotMatch(repeat.reply, /\+1 credit/);
+  assert.equal(store.credits.filter((entry) => entry.reason === "review").length, 1);
 });
 
 test("several matches come back as a pick list, and a missing business offers to add it", async () => {

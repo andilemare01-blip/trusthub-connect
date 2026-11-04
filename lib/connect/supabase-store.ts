@@ -138,17 +138,27 @@ export class SupabaseConnectStore implements ConnectStore {
 
   async searchReviews(query: ReviewQuery): Promise<ReviewItem[]> {
     // Recent reviews first; the filter runs here because the set is small and the match rules must match the in-memory store.
-    const reviews = rows(await this.db.from("trusthub_connect_reviews")
-      .select("id,rating,review_text,status,verified_visit,created_at,directory_business_id")
-      .in("status", ["published", "pending"]).order("created_at", { ascending: false }).limit(300), "Search reviews");
-    const ids = [...new Set(reviews.map((row) => String(row.directory_business_id)).filter(Boolean))];
+    const [connect, app] = await Promise.all([
+      this.db.from("trusthub_connect_reviews")
+        .select("id,rating,review_text,status,verified_visit,created_at,directory_business_id")
+        .in("status", ["published", "pending"]).order("created_at", { ascending: false }).limit(300),
+      // Reviews written in the TrustHub app. WhatsApp reviews copied into that table are skipped, so nothing shows twice.
+      this.db.from("reviews")
+        .select("id,rating,comment,created_at,business_id_uuid")
+        .not("user_id", "like", "whatsapp:%").not("business_id_uuid", "is", null).order("created_at", { ascending: false }).limit(300),
+    ]);
+    const reviews = [
+      ...rows(connect, "Search reviews").map((row) => ({ id: row.id, rating: row.rating, text: row.review_text, verified: row.verified_visit === true, checked: row.status === "published", createdAt: row.created_at, businessId: row.directory_business_id })),
+      ...rows(app, "Search app reviews").map((row) => ({ id: row.id, rating: row.rating, text: row.comment, verified: false, checked: true, createdAt: row.created_at, businessId: row.business_id_uuid })),
+    ].sort((a, b) => Date.parse(String(b.createdAt)) - Date.parse(String(a.createdAt)));
+    const ids = [...new Set(reviews.map((row) => String(row.businessId)).filter(Boolean))];
     if (!ids.length) return [];
     const businesses = new Map(rows(await this.db.from("businesses").select(BUSINESS_COLUMNS).in("id", ids).limit(300), "Read review businesses").map((row) => [String(row.id), business(row)]));
     const items: ReviewItem[] = [];
     for (const row of reviews) {
-      const found = businesses.get(String(row.directory_business_id));
+      const found = businesses.get(String(row.businessId));
       if (!found) continue;
-      const item: ReviewItem = { id: String(row.id), rating: Number(row.rating), text: String(row.review_text ?? ""), verifiedVisit: row.verified_visit === true, checked: row.status === "published", createdAt: String(row.created_at ?? ""), business: found };
+      const item: ReviewItem = { id: String(row.id), rating: Number(row.rating), text: String(row.text ?? ""), verifiedVisit: row.verified, checked: row.checked, createdAt: String(row.createdAt ?? ""), business: found };
       if (reviewMatches(item, query)) items.push(item);
       if (items.length >= query.limit) break;
     }

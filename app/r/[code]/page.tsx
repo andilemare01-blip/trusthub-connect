@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import styles from "./landing.module.css";
 import { createSupabaseServerClient } from "@/lib/supabase/server-client";
 import { getLandingCard, normalizeCardCode, recordCardTap } from "@/lib/connect/cards";
@@ -59,6 +60,9 @@ export default async function CardLanding({ params, searchParams }: LandingProps
   // The TrustHub app's own review page for this business (the app and Connect share the businesses table).
   const appBase = (process.env.TRUSTHUB_APP_URL ?? "https://trusthub-five.vercel.app").replace(/\/+$/, "");
   const appHref = `${appBase}/business/${encodeURIComponent(business.id)}/review?from=card&card=${encodeURIComponent(card.code)}`;
+
+  // The app card skips this page: the tap is already counted above, so go straight to the review.
+  if (query.to === "app") redirect(appHref);
 
   return (
     <main className={styles.page}>

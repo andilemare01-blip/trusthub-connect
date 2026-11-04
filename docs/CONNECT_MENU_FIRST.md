@@ -58,5 +58,6 @@ Existing: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `WHATSAPP_*`, `OPENROUTER_API_K
 - A success message is sent only after the store confirmed the write.
 - Unverified listings and businesses are labelled as unchecked.
 - A typed number only opens the menu when no flow is waiting for an answer, so a rating of "5" stays a rating.
-- One review per person per business every 30 days.
+- People can review a business as often as they like. The free review credit is earned once per business every 30 days.
+- Each business has two cards: a WhatsApp card (`wa.me` link) and an app card (`/r/TH-####?to=app`, which goes straight to the app's review page).
 - Every write carries the WhatsApp message id, so a redelivered webhook never saves twice.

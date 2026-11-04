@@ -130,16 +130,22 @@ export async function updateCard(db: ConnectDbClient, cardId: string, change: { 
 }
 
 /**
- * The links for one card. `whatsapp` (only when the TrustHub WhatsApp number is
- * known) opens WhatsApp directly with "REVIEW TH-####" typed in, so a tap works
- * on a WhatsApp-only bundle with no browser data. `nfc` and `qr` open the web page.
+ * The links for one card. Each business gets two cards:
+ * - the WhatsApp card carries `whatsapp` (only when the TrustHub number is known),
+ *   which opens WhatsApp with "REVIEW TH-####" typed in, so a tap works on a
+ *   WhatsApp-only bundle with no browser data;
+ * - the app card carries `app` (`appQr` for its printed code), which opens the
+ *   browser and goes straight to the business's review page in the TrustHub app.
+ * `nfc` and `qr` open the page that offers both.
  */
-export function cardLinks(baseUrl: string, code: string, whatsappNumber?: string | null): { nfc: string; qr: string; whatsapp?: string } {
+export function cardLinks(baseUrl: string, code: string, whatsappNumber?: string | null): { nfc: string; qr: string; app: string; appQr: string; whatsapp?: string } {
   const base = baseUrl.replace(/\/+$/, "");
   const digits = (whatsappNumber ?? "").replace(/\D/g, "");
   return {
     nfc: `${base}/r/${code}?s=nfc`,
     qr: `${base}/r/${code}?s=qr`,
+    app: `${base}/r/${code}?s=nfc&to=app`,
+    appQr: `${base}/r/${code}?s=qr&to=app`,
     ...(digits.length >= 8 ? { whatsapp: `https://wa.me/${digits}?text=${encodeURIComponent(`REVIEW ${code}`)}` } : {}),
   };
 }

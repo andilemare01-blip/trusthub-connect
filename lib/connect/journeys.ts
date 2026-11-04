@@ -55,7 +55,8 @@ export interface ConnectReply {
 
 const CANCEL = /^(?:cancel|stop|exit|quit|back|main menu)$/i;
 const GREETING = /^(?:hi+|hie|hey|hello|hullo|helo|howzit|good (?:morning|afternoon|evening|day)|mhoro|mhoroi|makadii|salibonani|sawubona|start)\b[\s!.,]*$/i;
-const REVIEW_COOLDOWN_DAYS = 30;
+/** People may review a business as often as they visit. The free credit is earned once per business in this window, so repeat reviews can't be farmed for credits. */
+const REVIEW_CREDIT_WINDOW_DAYS = 30;
 /** Screens that show a result rather than wait for a specific answer; a typed menu number still works there. */
 const RESULT_SCREENS = new Set(["listing_search.results", "area.shown", "brain.followup", "name.ask", "scam.result", "feedback.offer", "add_business.review_existing"]);
 
@@ -357,20 +358,10 @@ export class ConnectJourneys {
     if (!card || card.status !== "active" || !card.business) {
       return { reply: `Card ${code} isn't active right now. Which business would you like to review? Send its name and town.`, state: { flow: "review", step: "which", data: {} }, action: "start_journey" };
     }
-    return await this.askRating(card.business, context, { verified: true, cardCode: card.code }, `Welcome! You're reviewing *${card.business.name}*${where(card.business) ? ` in ${where(card.business)}` : ""}. How was your visit?`);
+    return await this.askRating(card.business, { verified: true, cardCode: card.code }, `Welcome! You're reviewing *${card.business.name}*${where(card.business) ? ` in ${where(card.business)}` : ""}. How was your visit?`);
   }
 
-  private async askRating(business: DirectoryBusiness, context: ConnectContext, extra: { verified: boolean; cardCode: string | null }, intro?: string): Promise<ConnectReply> {
-    if (context.identityId) {
-      const last = await this.store.lastReviewAt(context.identityId, business.id);
-      if (last) {
-        const next = new Date(new Date(last).getTime() + REVIEW_COOLDOWN_DAYS * 86_400_000);
-        if (next > this.now()) {
-          const body = `You already reviewed *${business.name}* on ${new Date(last).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}. You can review it again from ${next.toLocaleDateString("en-GB", { day: "numeric", month: "short" })}.`;
-          return { reply: body, interactive: buttons(body, [["menu.review", "Review another"], ["btn.menu", "Main menu"]]), state: null, action: "answer" };
-        }
-      }
-    }
+  private async askRating(business: DirectoryBusiness, extra: { verified: boolean; cardCode: string | null }, intro?: string): Promise<ConnectReply> {
     const body = intro ?? `How was *${business.name}*?`;
     return {
       reply: `${body}\n\nReply 1 to 5 (5 is excellent).`,
@@ -391,7 +382,7 @@ export class ConnectJourneys {
     const openBusiness = async (id: string) => {
       const business = await this.store.getBusiness(id);
       if (!business) return { reply: "I couldn't open that business. Send the name again, please.", state: { flow: "review" as const, step: "which", data: {} }, action: "clarify" as const };
-      return await this.askRating(business, context, { verified: false, cardCode: null });
+      return await this.askRating(business, { verified: false, cardCode: null });
     };
     if (state.step === "which") return await this.findForReview(text, context);
     if (state.step === "pick") return text.startsWith("biz:") ? await openBusiness(text.slice(4)) : await this.findForReview(text, context);
@@ -410,12 +401,14 @@ export class ConnectJourneys {
       if (!context.identityId) return this.requireIdentity(state);
       const comment = chose(text, "btn.skip", "skip", "no", "none", "nothing") ? "" : text.slice(0, 1000);
       const businessId = String(data.businessId);
+      const lastReview = await this.store.lastReviewAt(context.identityId, businessId);
+      const earnsCredit = !lastReview || this.now().getTime() - new Date(lastReview).getTime() >= REVIEW_CREDIT_WINDOW_DAYS * 86_400_000;
       const saved = await this.store.saveReview({
         businessId, identityId: context.identityId, rating: Number(data.rating), text: comment,
         verifiedVisit: data.verified === true, cardCode: typeof data.cardCode === "string" ? data.cardCode : null,
         sourceMessageId: context.providerMessageId ?? `local:${businessId}:${this.now().getTime()}`,
       });
-      const credit = await this.store.addCredits(context.identityId, 1, "review", saved.id);
+      const credit = earnsCredit ? await this.store.addCredits(context.identityId, 1, "review", saved.id) : null;
       const lines = [
         "Saved. Thank you!",
         "",
@@ -424,7 +417,7 @@ export class ConnectJourneys {
         ...(data.verified === true ? ["✓ Verified visit · you tapped the card in store"] : []),
         "",
         saved.status === "published" ? "Your review is live." : "It will appear after a quick check.",
-        `+1 credit · you now have ${credit.balance}`,
+        credit ? `+1 credit · you now have ${credit.balance}` : `Review credits are limited to one per business every ${REVIEW_CREDIT_WINDOW_DAYS} days.`,
       ];
       // Someone who hasn't left a name is asked once, right after their first review, so others see who reviewed.
       if (!context.profileName) {
@@ -467,7 +460,9 @@ export class ConnectJourneys {
       const place = where(item.business);
       const status = item.verifiedVisit ? "Verified visit" : item.checked ? "Checked" : "Not checked yet";
       const comment = item.text ? `"${clip(item.text, 160)}"` : "No comment, just a rating";
-      return `${index + 1}. ${stars} *${clip(item.business.name, 40)}*${place ? ` · ${place}` : ""}\n   ${comment} · ${status}`;
+      const written = new Date(item.createdAt);
+      const date = Number.isNaN(written.getTime()) ? "" : ` · ${written.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+      return `${index + 1}. ${stars} *${clip(item.business.name, 40)}*${place ? ` · ${place}` : ""}\n   ${comment} · ${status}${date}`;
     });
     const body = [`Here's what people say about *${topic}*:`, "", ...lines, "", "Reviews marked *Not checked yet* have not been checked by the team."].join("\n");
     return { reply: body, interactive: buttons(body, actions), state: null, action: "answer" };
@@ -551,7 +546,7 @@ export class ConnectJourneys {
         return next("duplicate", "Tap *Same one* or *No, it's new*.");
       case "review_existing": {
         const business = await this.store.getBusiness(String(data.duplicateId ?? ""));
-        if (chose(text, "btn.review_it", "review it", ...YES) && business) return await this.askRating(business, context, { verified: false, cardCode: null });
+        if (chose(text, "btn.review_it", "review it", ...YES) && business) return await this.askRating(business, { verified: false, cardCode: null });
         return await this.welcome(context, false);
       }
       case "confirm": {

@@ -109,6 +109,11 @@ test("Benita answers from the data, and still answers from it when the AI fails"
   assert.ok(fallback.length > 20);
 });
 
+test("Benita's answers don't show markdown symbols", async () => {
+  const { clean } = await import("../lib/benita/advisor.ts");
+  assert.equal(clean("A **$11,250** Honda Fit\n## Next"), "A $11,250 Honda Fit\nNext");
+});
+
 test("Benita greets people, chats, and only reads the data when a question needs it", async () => {
   const { askAdvisor, needsData, quickReply } = await import("../lib/benita/advisor.ts");
   const { InMemoryConnectStore } = await import("../lib/connect/store.ts");

@@ -1,9 +1,11 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><link rel=manifest href="/business.webmanifest"><link rel=apple-touch-icon href="/apple-icon.png"><meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content="TrustHub Business"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>TrustHub for Business</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
+html,body{max-width:100%;overflow-x:hidden;overscroll-behavior:none;touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+@media (max-width:768px){input,select,textarea{font-size:16px!important}}
 /* Layout: a phone-first owner's console. Sticky header with business switcher, one column of panels, bottom tab bar. */
 :root{
   --bg:#f3f5f2; --surface:#ffffff; --sunk:#e8ece7; --line:#d6ddd5;
@@ -724,16 +726,32 @@ function viewBenita(v){
   };
 }
 
+/* ---------- ADD TO HOME SCREEN ---------- */
+let installEvent = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installEvent = e; });
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+function installSheet(){
+  const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const body = installEvent ? `<p class="muted" style="margin:0">Open your business like any other app.</p><div class="row"><button class="btn" data-add>Add to home screen</button><button class="btn ghost" data-close>Not now</button></div>`
+    : iphone ? `<p class="muted" style="margin:0">On iPhone this only works in Safari.</p><div class="todo"><div><b>Step 1: Tap the Share button</b><p>The square with an arrow pointing up.</p></div></div><div class="todo"><div><b>Step 2: Tap Add to Home Screen</b><p>Scroll down the list until you see it.</p></div></div><div class="todo"><div><b>Step 3: Tap Add</b><p>It's at the top right.</p></div></div><button class="btn ghost" data-close>Done</button>`
+    : `<div class="todo"><div><b>Step 1: Open this page in Chrome</b><p>Then tap the three dots at the top right.</p></div></div><div class="todo"><div><b>Step 2: Tap Add to Home screen</b><p>It may say Install app.</p></div></div><div class="todo"><div><b>Step 3: Tap Install</b></div></div><button class="btn ghost" data-close>Done</button>`;
+  sheet(`<h2>Add to home screen</h2>${body}`, s => {
+    s.querySelector("[data-close]").onclick = () => s.remove();
+    const add = s.querySelector("[data-add]");
+    if (add) add.onclick = async () => { await installEvent.prompt(); installEvent = null; s.remove(); };
+  });
+}
+
 /* ---------- MORE ---------- */
 function viewMore(v){
   const admin = S.list?.is_admin;
   v.innerHTML = `<section class="panel"><div>
-    ${[["page","Page details","Phone, hours, address and description"],["plan","Tokens & payments",`You have ${S.x?.tokens ?? 0} tokens`],["claim","Claim another business","Add a branch or a second business"]].map(([k,t,p]) => `<div class="todo"><span class="dot ${k==="admin"?"seal":""}"></span><div><b>${t}</b><p>${p}</p></div><button class="btn ghost sm" data-go="${k}">Open</button></div>`).join("")}
+    ${[["page","Page details","Phone, hours, address and description"],["plan","Tokens & payments",`You have ${S.x?.tokens ?? 0} tokens`],["claim","Claim another business","Add a branch or a second business"],["install","Add to home screen","Open your business like an app"]].map(([k,t,p]) => `<div class="todo"><span class="dot ${k==="admin"?"seal":""}"></span><div><b>${t}</b><p>${p}</p></div><button class="btn ghost sm" data-go="${k}">Open</button></div>`).join("")}
   </div></section>
   <section class="panel stack"><span class="eyebrow">The Digital Package</span><h2>${S.x?.boughtWebsite || S.x?.hasWebsite ? "Your website" : `A fresh website, from $${esc(S.x?.websiteFrom || "30")}`}</h2><p class="muted" style="margin:0;font-size:14px">Your own domain, one tap to WhatsApp, and your reviews on show.</p><div><button class="btn sm seal" id="pkg">See what's included</button></div></section>
   ${admin ? `<section class="panel spread"><span>CEO desk</span><a class="btn ghost sm" href="/admin" style="text-decoration:none">Open</a></section>` : ""}
   <section class="panel spread"><span class="muted" style="font-size:14px">${S.mode==="demo" ? "Preview mode" : "Signed in as " + esc(S.me?.email || "")}</span>${S.mode==="live"?'<button class="btn ghost sm" id="out">Sign out</button>':""}</section>`;
-  v.querySelectorAll("[data-go]").forEach(x => x.onclick = () => { S.tab = x.dataset.go; render(); window.scrollTo(0,0); });
+  v.querySelectorAll("[data-go]").forEach(x => x.onclick = () => { if (x.dataset.go === "install") return installSheet(); S.tab = x.dataset.go; render(); window.scrollTo(0,0); });
   $("#pkg").onclick = () => packageSheet("more");
   $("#out")?.addEventListener("click", async () => { await S.api.signOut(); S.me = null; renderAuth(); });
 }

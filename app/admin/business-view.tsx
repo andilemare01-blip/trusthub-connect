@@ -24,7 +24,7 @@ const PERIODS: [string, string][] = [["30", "Last 30 days"], ["7", "Last 7 days"
 
 /** The CEO's section: claims, payments, chats, revenue, commissions and the network. Only admins reach this tab or its API. */
 export function BusinessView({ api }: { api: Api }) {
-  const [tab, setTab] = useState<"today" | "revenue" | "network">("today");
+  const [tab, setTab] = useState<"today" | "revenue" | "credits" | "network">("today");
   const [desk, setDesk] = useState<Desk | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -42,11 +42,11 @@ export function BusinessView({ api }: { api: Api }) {
     <>
       <header className={styles.head}><div><h1>Business</h1><p className={styles.muted}>Your company at a glance. Businesses and agents only ever see their own part of this.</p></div></header>
       <div className={styles.pills} role="tablist">
-        {([["today", `Today${waiting ? ` (${waiting})` : ""}`], ["revenue", "Revenue"], ["network", "Network"]] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? styles.pillOn : styles.pill} onClick={() => setTab(key)}>{label}</button>)}
+        {([["today", `Today${waiting ? ` (${waiting})` : ""}`], ["revenue", "Revenue"], ["credits", "Credits"], ["network", "Network"]] as const).map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? styles.pillOn : styles.pill} onClick={() => setTab(key)}>{label}</button>)}
       </div>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {note ? <p className={styles.info} role="status">{note}</p> : null}
-      {!desk ? <p className={styles.muted}>Loading…</p> : tab === "today" ? <Today api={api} desk={desk} act={act} /> : tab === "revenue" ? <RevenueView api={api} desk={desk} act={act} /> : <Network desk={desk} act={act} />}
+      {!desk ? <p className={styles.muted}>Loading…</p> : tab === "today" ? <Today api={api} desk={desk} act={act} /> : tab === "revenue" ? <RevenueView api={api} desk={desk} act={act} /> : tab === "credits" ? <CreditsView api={api} /> : <Network desk={desk} act={act} />}
     </>
   );
 }
@@ -128,6 +128,69 @@ function DealTools({ api, deal, agents, act }: { api: Api; deal: OpenDeal; agent
         <button type="button" className={styles.primarySmall} disabled={!paid.amount} onClick={() => void act<{ commission: number }>({ action: "payment-record", deal: deal.id, product: deal.package === "website" ? "website" : "other", note: deal.package, ...paid }, (result) => `Sale recorded. Commission: ${usd(result.commission)}.`)}>Record payment</button>
       </div>
     </div>
+  );
+}
+
+type CreditUse = {
+  totals: { free: number; bought: number; spent: number; remaining: number };
+  uses: { use: string; tokens: number; times: number }[];
+  businesses: { business: string; free: number; bought: number; spent: number; remaining: number; last_used: string | null; top_use: string | null }[];
+  customers: { reason: string; times: number; credits: number }[];
+};
+
+const USE_NAMES: Record<string, string> = {
+  report: "Business reports",
+  market: "Market checks",
+  reply: "Review replies written by Benita",
+  ask: "Questions to Benita",
+  post: "Posts written by Benita",
+  "auto draft": "Automatic reply drafts",
+  "auto post": "Automatic replies posted",
+};
+
+const CUSTOMER_NAMES: Record<string, string> = {
+  welcome: "Free welcome credits",
+  review: "Earned for reviews",
+  add_business: "Earned for adding a business",
+  listing: "Earned for listings",
+  deep_question: "Spent on deep questions",
+  admin_adjustment: "Changed by you",
+};
+
+/** What businesses and WhatsApp users actually use credits on. */
+function CreditsView({ api }: { api: Api }) {
+  const [data, setData] = useState<CreditUse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api<CreditUse>(`${PATH}?view=credits`).then(setData).catch((failure) => setError(failure instanceof Error ? failure.message : "Credit use could not be loaded."));
+  }, [api]);
+  if (error) return <p className={styles.error} role="alert">{error}</p>;
+  if (!data) return <p className={styles.muted}>Loading…</p>;
+  const name = (use: string | null) => (use ? USE_NAMES[use] ?? use : "Nothing yet");
+  return (
+    <>
+      <section className={styles.panel}>
+        <h2>Business credits</h2>
+        <p className={styles.muted}>{data.totals.free} given free · {data.totals.bought} bought · {data.totals.spent} used · {data.totals.remaining} left</p>
+        <h3>What they use them on</h3>
+        {data.uses.length === 0 ? <p className={styles.empty}>No business has used a credit yet.</p> : data.uses.map((item) => (
+          <div key={item.use} className={styles.item}><div className={styles.itemText}><b>{name(item.use)}</b><span>{item.times} {item.times === 1 ? "time" : "times"} · {item.tokens} credits</span></div></div>
+        ))}
+      </section>
+      <section className={styles.panel}>
+        <h2>By business</h2>
+        {data.businesses.length === 0 ? <p className={styles.empty}>No businesses have credits yet.</p> : data.businesses.map((item) => (
+          <div key={item.business} className={styles.item}><div className={styles.itemText}><b>{item.business}</b><span>{item.remaining} left · {item.spent} used · {item.bought} bought · {item.free} free</span><span>Uses most: {name(item.top_use)}</span></div></div>
+        ))}
+      </section>
+      <section className={styles.panel}>
+        <h2>WhatsApp customers&apos; credits</h2>
+        <p className={styles.muted}>Separate from business credits.</p>
+        {data.customers.map((item) => (
+          <div key={item.reason} className={styles.item}><div className={styles.itemText}><b>{CUSTOMER_NAMES[item.reason] ?? item.reason}</b><span>{item.times} {item.times === 1 ? "time" : "times"} · {item.credits > 0 ? "+" : ""}{item.credits} credits</span></div></div>
+        ))}
+      </section>
+    </>
   );
 }
 

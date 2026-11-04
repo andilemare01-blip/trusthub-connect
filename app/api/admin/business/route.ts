@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
       const data = await call(admin.db, "ceo_revenue", { p_from: when(query.get("from")), p_to: when(query.get("to")), p_agent: agentId(query.get("agent")), p_product: query.get("product") || null, p_city: query.get("city") || null });
       return NextResponse.json(data, { headers: noStore });
     }
+    if (query.get("view") === "credits") return NextResponse.json(await call(admin.db, "ceo_credit_use"), { headers: noStore });
     if (query.get("view") === "room") return NextResponse.json(await call(admin.db, "deal_read", { p_role: "ceo", p_key: "", p_deal: uuid(query.get("deal")) }), { headers: noStore });
     return NextResponse.json(await call(admin.db, "ceo_desk"), { headers: noStore });
   } catch (error) { return failure(error); }

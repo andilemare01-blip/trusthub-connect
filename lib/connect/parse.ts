@@ -11,6 +11,32 @@ export function parseCardCode(text: string): string | null {
   return match ? `TH-${match[1]}` : null;
 }
 
+/** "in 2 hours", "1 hour", "tonight" or "later": how long to wait before a review reminder. */
+export function reviewDelay(text: string): number | "tonight" | null {
+  const value = text.toLocaleLowerCase();
+  if (/\btonight\b/.test(value)) return "tonight";
+  const hours = /\b(\d{1,2})\s*(?:hours?|hrs?|h)\b/.exec(value);
+  if (hours) return Math.min(23, Math.max(1, Number(hours[1]))) * 60;
+  return /\blater\b/.test(value) ? 120 : null;
+}
+
+const hararePart = (date: Date) => (date.getUTCHours() + 2) % 24 + date.getUTCMinutes() / 60;
+
+/** When to send a reminder. Nobody gets a message overnight, and it stays inside WhatsApp's 24-hour reply window. */
+export function reminderTime(delay: number | "tonight", now: Date): Date {
+  const hour = 3_600_000;
+  const atHarare = (clock: number, from: Date) => {
+    const midnight = new Date(from.getTime() + 2 * hour);
+    midnight.setUTCHours(0, 0, 0, 0);
+    return new Date(midnight.getTime() - 2 * hour + clock * hour);
+  };
+  let due = delay === "tonight" ? (hararePart(now) < 18 ? atHarare(19, now) : new Date(now.getTime() + 2 * hour)) : new Date(now.getTime() + delay * 60_000);
+  const clock = hararePart(due);
+  if (clock >= 21 || clock < 7) due = atHarare(8, clock >= 21 ? new Date(due.getTime() + 12 * hour) : due);
+  const latest = new Date(now.getTime() + 23 * hour);
+  return due > latest ? latest : due;
+}
+
 export interface ParsedPrice { priceText: string; amount: number; currency: string }
 
 const CURRENCY_WORDS: Record<string, string> = { "$": "USD", usd: "USD", us$: "USD", zig: "ZiG", zwg: "ZiG", r: "ZAR", rand: "ZAR", zar: "ZAR" };

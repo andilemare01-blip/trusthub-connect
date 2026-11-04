@@ -218,6 +218,11 @@ export interface ConnectStore {
   /** The newest review this identity left for this business, if any. */
   /** This person's latest review of this business, for a welcome back. */
   lastReview(identityId: string, businessId: string): Promise<{ createdAt: string; rating: number; text: string } | null>;
+  /** "Review later": replaces any open reminder for this card. */
+  saveReminder(reminder: { identityId: string; cardCode: string; businessName: string; dueAt: string }): Promise<void>;
+  /** A reminder sent in the last 12 hours and not yet answered. */
+  openReminder(identityId: string): Promise<{ cardCode: string } | null>;
+  closeReminder(identityId: string, cardCode: string): Promise<void>;
   /** Counts a card opened on WhatsApp. A wa.me link can only be counted when its message arrives. */
   recordCardOpen(cardId: string): Promise<void>;
   /** The owner's "Did you know" facts for this business. */
@@ -277,6 +282,7 @@ export class InMemoryConnectStore implements ConnectStore {
   feedback: { message: string; identityId: string }[] = [];
   credits: { identityId: string; delta: number; reason: CreditReason; reference: string }[] = [];
   cardOpens: string[] = [];
+  reminders: { identityId: string; cardCode: string; businessName: string; dueAt: string; sent: boolean }[] = [];
   ownerFacts = new Map<string, string[]>();
   private readonly now: () => string;
   private sequence = 0;
@@ -295,6 +301,17 @@ export class InMemoryConnectStore implements ConnectStore {
   async lastReview(identityId: string, businessId: string) {
     const latest = this.reviews.filter((review) => review.identityId === identityId && review.businessId === businessId).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
     return latest ? { createdAt: latest.createdAt, rating: latest.rating, text: latest.text } : null;
+  }
+  async saveReminder(reminder: { identityId: string; cardCode: string; businessName: string; dueAt: string }) {
+    this.reminders = this.reminders.filter((item) => !(item.identityId === reminder.identityId && item.cardCode === reminder.cardCode));
+    this.reminders.push({ ...reminder, sent: false });
+  }
+  async openReminder(identityId: string) {
+    const found = this.reminders.find((item) => item.identityId === identityId && item.sent);
+    return found ? { cardCode: found.cardCode } : null;
+  }
+  async closeReminder(identityId: string, cardCode: string) {
+    this.reminders = this.reminders.filter((item) => !(item.identityId === identityId && item.cardCode === cardCode));
   }
   async recordCardOpen(cardId: string) {
     this.cardOpens.push(cardId);

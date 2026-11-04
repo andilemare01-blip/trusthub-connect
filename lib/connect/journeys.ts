@@ -14,7 +14,7 @@
  */
 import type { WhatsAppInteractiveMessage } from "../whatsapp/provider.ts";
 import { clip, clipText, isMenuCommand, menuInteractive, menuText, resolveMenuSelection, type MenuId } from "./menu.ts";
-import { categorise, correctTown, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice } from "./parse.ts";
+import { categorise, correctTown, keywords, listingTitle, maskPhone, parseCardCode, parseCheckedPhone, parsePlace, parsePrice, reminderTime, reviewDelay } from "./parse.ts";
 import { goodbyeLine, handoverLine, humourLine, smalltalkLine, styleFor, thanksLine } from "./persona.ts";
 import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
 import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
@@ -97,6 +97,15 @@ const RATING_ROWS = [
   { id: "rate:2", title: "2 · Poor", description: "Not happy" },
   { id: "rate:1", title: "1 · Terrible", description: "Would not go back" },
 ];
+
+/** The reminder sent when a "review later" time arrives. Each rating row carries the card, so the review stays a verified visit. */
+export function reminderMessage(code: string, businessName: string): { text: string; interactive: WhatsAppInteractiveMessage } {
+  const body = `Hi, it's TrustHub! You asked me to remind you. How was *${businessName}*? Tap a rating, or just tell me how it went.`;
+  return {
+    text: `${body}\n\nReply 1 to 5 (5 is excellent).`,
+    interactive: list(body, "Tap to rate", "Your rating", RATING_ROWS.map((row) => ({ ...row, id: row.id.replace("rate:", `rate:${code}:`) }))),
+  };
+}
 
 function parseRating(text: string): number | null {
   const id = /^rate:([1-5])$/.exec(text.trim());
@@ -194,8 +203,19 @@ export class ConnectJourneys {
     if (!message) return state ? this.repeat(state) : null;
     try {
       if (GREETING.test(message) || isMenuCommand(message) || chose(message, "btn.menu") || (state && CANCEL.test(message))) return await this.welcome(context, GREETING.test(message));
+      // A rating tapped on a "review later" reminder.
+      const reminded = /^rate:(TH-\d{4,6}):([1-5])$/i.exec(message);
+      if (reminded) {
+        const opened = await this.startCardReview(reminded[1].toUpperCase(), context, "now");
+        return opened.state?.step === "rating" ? await this.review(opened.state, `rate:${reminded[2]}`, context) : opened;
+      }
       const card = parseCardCode(message);
-      if (card && (/^\s*(?:review\s+)?th-?\d{4,6}(?:\s+via page)?\s*$/i.test(message) || !state)) return await this.startCardReview(card, context, /\bvia page\s*$/i.test(message));
+      if (card && (/^\s*(?:review\s+)?th-?\d{4,6}(?:\s+(?:now|via page|tonight|later|in\s+\d{1,2}\s*(?:hours?|hrs?|h)))*\s*$/i.test(message) || !state)) return await this.startCardReview(card, context, message);
+      // Someone answering a reminder in their own words: "the food was okay".
+      if (!state && context.identityId && !/^(?:menu|btn|biz)[.:]/.test(message)) {
+        const answered = await this.answerReminder(message, context).catch(() => null);
+        if (answered) return answered;
+      }
       // A tapped menu row works from anywhere; a typed number only means a menu
       // option when no flow is waiting for an answer ("5" may be a rating).
       const selection = resolveMenuSelection(message);
@@ -361,13 +381,51 @@ export class ConnectJourneys {
 
   // ---------------------------------------------------------------- reviews
 
-  private async startCardReview(code: string, context: ConnectContext, fromPage = false): Promise<ConnectReply> {
+  /** A rating or a few words sent after a reminder goes to that review, not to a search. */
+  private async answerReminder(message: string, context: ConnectContext): Promise<ConnectReply | null> {
+    const rating = parseRating(message);
+    const review = /\b(food|meal|service|staff|nice|good|great|okay|ok|bad|lovely|tasty|delicious|cold|late|slow|enjoyed|loved|liked|terrible|awful|amazing)\b/i.test(message) && !message.includes("?");
+    if (!rating && !review) return null;
+    const open = await this.store.openReminder(context.identityId!);
+    if (!open) return null;
+    const opened = await this.startCardReview(open.cardCode, context, "now");
+    if (opened.state?.step !== "rating") return opened;
+    if (rating) return await this.review(opened.state, message, context);
+    const body = "Thanks for telling me! And out of 5, how would you rate it?";
+    return { ...opened, reply: `${body}\n\nReply 1 to 5 (5 is excellent).`, interactive: list(body, "Tap to rate", "Your rating", RATING_ROWS), state: { ...opened.state, data: { ...opened.state.data, pendingComment: message.slice(0, 1000) } } };
+  }
+
+  private async remindLater(card: { code: string; business: DirectoryBusiness }, delay: number | "tonight", context: ConnectContext): Promise<ConnectReply> {
+    if (!context.identityId) return this.requireIdentity(null);
+    const now = this.now();
+    const due = reminderTime(delay, now);
+    await this.store.saveReminder({ identityId: context.identityId, cardCode: card.code, businessName: card.business.name, dueAt: due.toISOString() });
+    const time = due.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Harare" });
+    const day = due.toLocaleDateString("en-GB", { timeZone: "Africa/Harare" }) === now.toLocaleDateString("en-GB", { timeZone: "Africa/Harare" }) ? "today" : "tomorrow";
+    const body = `Hi, it's ${context.assistantName}! All set. I'll send you a message ${day} at ${time} to review *${card.business.name}*, once you've had the full experience. Thank you for your cooperation 🙏`;
+    return { reply: body, interactive: buttons(body, [["btn.menu", "Main menu"]]), state: null, action: "answer" };
+  }
+
+  private async startCardReview(code: string, context: ConnectContext, message = ""): Promise<ConnectReply> {
     const card = await this.store.findCard(code);
     if (!card || card.status !== "active" || !card.business) {
       return { reply: `Card ${code} isn't active right now. Which business would you like to review? Send its name and town.`, state: { flow: "review", step: "which", data: {} }, action: "start_journey" };
     }
+    const fromPage = /\bvia page\b/i.test(message);
+    const delay = reviewDelay(message);
+    const now = /\bnow\b/i.test(message);
     // A card opened from the web page was already counted there. A failed count must never stop someone from reviewing.
-    if (!fromPage) await this.store.recordCardOpen(card.id).catch(() => undefined);
+    if (!fromPage && !now && !delay) await this.store.recordCardOpen(card.id).catch(() => undefined);
+    if (delay) return await this.remindLater({ code: card.code, business: card.business }, delay, context);
+    if (!now && context.identityId) {
+      const body = `Hi! You're at *${card.business.name}*${where(card.business) ? ` in ${where(card.business)}` : ""}. Would you like to review now, or later once you've eaten or tried it? I'll send you a reminder.`;
+      return {
+        reply: `${body}\n\nReply *now*, *in 1 hour*, *in 2 hours* or *tonight*.`,
+        interactive: buttons(body, [[`REVIEW ${card.code} now`, "Review now"], [`REVIEW ${card.code} in 1 hour`, "In 1 hour"], [`REVIEW ${card.code} in 2 hours`, "In 2 hours"]], "You can also reply: tonight"),
+        state: { flow: "review", step: "when", data: { cardCode: card.code } },
+        action: "clarify",
+      };
+    }
     return await this.askRating(card.business, context, { verified: true, cardCode: card.code }, `Welcome! You're reviewing *${card.business.name}*${where(card.business) ? ` in ${where(card.business)}` : ""}. How was your visit?`);
   }
 
@@ -395,6 +453,16 @@ export class ConnectJourneys {
       if (!business) return { reply: "I couldn't open that business. Send the name again, please.", state: { flow: "review" as const, step: "which", data: {} }, action: "clarify" as const };
       return await this.askRating(business, context, { verified: false, cardCode: null });
     };
+    if (state.step === "when") {
+      const code = String(data.cardCode);
+      if (parseRating(text)) {
+        const opened = await this.startCardReview(code, context, "now");
+        return opened.state?.step === "rating" ? await this.review(opened.state, text, context) : opened;
+      }
+      if (chose(text, "now", "review now", "right now")) return await this.startCardReview(code, context, "now");
+      if (reviewDelay(text)) return await this.startCardReview(code, context, text);
+      return { reply: "Reply *now*, *in 1 hour*, *in 2 hours* or *tonight*.", state, action: "clarify" };
+    }
     if (state.step === "which") return await this.findForReview(text, context);
     if (state.step === "pick") return text.startsWith("biz:") ? await openBusiness(text.slice(4)) : await this.findForReview(text, context);
     if (state.step === "confirm") {
@@ -405,6 +473,7 @@ export class ConnectJourneys {
     if (state.step === "rating") {
       const rating = parseRating(text);
       if (!rating) return { reply: "Please choose a rating from 1 to 5.", interactive: list(`How was *${data.businessName}*?`, "Tap to rate", "Your rating", RATING_ROWS), state, action: "clarify" };
+      if (typeof data.pendingComment === "string") return await this.review({ ...state, step: "comment", data: { ...data, rating } }, data.pendingComment, context);
       const body = "Want to add a few words? Type it, or tap Skip.";
       return { reply: body, interactive: buttons(body, [["btn.skip", "Skip"]]), state: { ...state, step: "comment", data: { ...data, rating } }, action: "clarify" };
     }
@@ -419,6 +488,7 @@ export class ConnectJourneys {
         verifiedVisit: data.verified === true, cardCode: typeof data.cardCode === "string" ? data.cardCode : null,
         sourceMessageId: context.providerMessageId ?? `local:${businessId}:${this.now().getTime()}`,
       });
+      if (typeof data.cardCode === "string") await this.store.closeReminder(context.identityId, data.cardCode).catch(() => undefined);
       const credit = earnsCredit ? await this.store.addCredits(context.identityId, 1, "review", saved.id) : null;
       const fact = (await this.store.businessFacts(businessId).catch(() => []))[0];
       const previous = typeof data.previousRating === "number" ? data.previousRating : null;

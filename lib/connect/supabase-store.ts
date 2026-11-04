@@ -129,6 +129,23 @@ export class SupabaseConnectStore implements ConnectStore {
     return found[0] ? business(found[0]) : null;
   }
 
+  async saveReminder(reminder: { identityId: string; cardCode: string; businessName: string; dueAt: string }): Promise<void> {
+    await this.closeReminder(reminder.identityId, reminder.cardCode);
+    const result = await this.db.from("connect_review_reminders").insert({ whatsapp_identity_id: identity(reminder.identityId), card_code: reminder.cardCode, business_name: reminder.businessName, due_at: reminder.dueAt });
+    if (result.error) throw new ConnectStoreError("Save reminder", result.error);
+  }
+
+  async openReminder(identityId: string): Promise<{ cardCode: string } | null> {
+    const found = rows(await this.db.from("connect_review_reminders").select("card_code").eq("whatsapp_identity_id", identity(identityId)).eq("status", "sent")
+      .gte("sent_at", new Date(Date.now() - 12 * 3_600_000).toISOString()).order("sent_at", { ascending: false }).limit(1), "Read reminder");
+    return found[0] ? { cardCode: String(found[0].card_code) } : null;
+  }
+
+  async closeReminder(identityId: string, cardCode: string): Promise<void> {
+    const result = await this.db.from("connect_review_reminders").update({ status: "done" }).eq("whatsapp_identity_id", identity(identityId)).eq("card_code", cardCode).in("status", ["scheduled", "sent"]);
+    if (result.error) throw new ConnectStoreError("Close reminder", result.error);
+  }
+
   async recordCardOpen(cardId: string): Promise<void> {
     const result = await this.db.from("connect_card_taps").insert({ card_id: cardId, channel: "whatsapp" });
     if (result.error) throw new ConnectStoreError("Record card open", result.error);

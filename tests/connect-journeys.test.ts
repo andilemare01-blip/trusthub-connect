@@ -40,7 +40,9 @@ test("a first greeting grants the welcome credits once and a later one says welc
 test("tapping a review card reviews that business, marks a verified visit and earns a credit", async () => {
   const { store, say } = setup();
   await say("Hi");
-  const opened = await say("REVIEW TH-1042");
+  const asked = await say("REVIEW TH-1042");
+  assert.match(asked.reply, /review now, or later/);
+  const opened = await say("Review now");
   assert.match(opened.reply, /You're reviewing \*Moyo Plumbing\* in Avondale, Harare/);
   assert.equal(opened.interactive?.type, "list");
   const rated = await say("rate:4");
@@ -333,4 +335,60 @@ test("the owner's Did you know shows after a review", async () => {
   const saved = await say("btn.skip");
   assert.match(saved.reply, /Did you know\?\* Our bread is baked at 4am/);
   assert.match(saved.reply, /From the owner/);
+});
+
+test("a card asks now or later, and later sets a reminder from the assistant", async () => {
+  const { store, say } = setup();
+  await say("REVIEW TH-1042");
+  const later = await say("In 2 hours");
+  assert.match(later.reply, /All set/);
+  assert.match(later.reply, /Moyo Plumbing/);
+  assert.match(later.reply, /Thank you for your cooperation/);
+  assert.equal(store.reminders.length, 1);
+  assert.equal(store.reminders[0].cardCode, "TH-1042");
+});
+
+test("a link from the card page sets the reminder straight away and isn't counted twice", async () => {
+  const { store, say } = setup();
+  const later = await say("REVIEW TH-1042 tonight via page");
+  assert.match(later.reply, /All set/);
+  assert.equal(store.cardOpens.length, 0);
+});
+
+test("a tapped rating on a reminder saves a verified review and closes the reminder", async () => {
+  const { store, say } = setup();
+  await say("REVIEW TH-1042 in 1 hour");
+  store.reminders[0].sent = true;
+  await say("rate:TH-1042:4");
+  await say("btn.skip");
+  assert.equal(store.reviews[0].rating, 4);
+  assert.equal(store.reviews[0].verifiedVisit, true);
+  assert.equal(store.reviews[0].cardCode, "TH-1042");
+  assert.equal(store.reminders.length, 0);
+});
+
+test("answering a reminder in words keeps those words as the review", async () => {
+  const { store, say } = setup();
+  await say("REVIEW TH-1042 in 1 hour");
+  store.reminders[0].sent = true;
+  const asked = await say("the food was okay but a bit cold");
+  assert.match(asked.reply, /out of 5/);
+  await say("3");
+  assert.equal(store.reviews[0].text, "the food was okay but a bit cold");
+  assert.equal(store.reviews[0].rating, 3);
+});
+
+test("a reminder message carries the card in every rating", async () => {
+  const { reminderMessage } = await import("../lib/connect/journeys.ts");
+  const message = reminderMessage("TH-1042", "Moyo Plumbing");
+  assert.equal(message.interactive.sections?.[0].rows[0].id, "rate:TH-1042:5");
+});
+
+test("reminders are never sent overnight", async () => {
+  const { reminderTime } = await import("../lib/connect/parse.ts");
+  const harare = (due: Date) => due.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Harare" });
+  assert.equal(harare(reminderTime(120, new Date("2026-11-05T10:00:00Z"))), "14:00");
+  assert.equal(harare(reminderTime("tonight", new Date("2026-11-05T10:00:00Z"))), "19:00");
+  assert.equal(harare(reminderTime(120, new Date("2026-11-05T20:00:00Z"))), "08:00");
+  assert.equal(harare(reminderTime(60, new Date("2026-11-05T23:30:00Z"))), "08:00");
 });

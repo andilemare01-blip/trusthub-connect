@@ -20,7 +20,7 @@ import { firstNameOf, momentOf, voiceLine } from "./voice.ts";
 import { parseLocalSearchRequest } from "../whatsapp/intent-parser.ts";
 import { benitaLine } from "../benita/index.ts";
 import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
-import { brainFallback, isAdviceQuestion, isOpenQuestion } from "./brain.ts";
+import { brainFallback, fitOneMessage, isAdviceQuestion, isOpenQuestion, requestedWebsite } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
 import type { AccountLinkResult, ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
@@ -158,7 +158,7 @@ function listingLine(listing: Listing, index: number): string {
   const checked = web ? (listing.status === "approved" ? `Found online (${web})` : `Found online (${web}), not yet checked`) : listing.status === "approved" ? "Checked" : "Not yet checked";
   const facts = [listing.priceText, [listing.area, listing.city].filter(Boolean).join(", ") || null].filter(Boolean).join(" · ");
   const contact = waLink(listing.phone);
-  return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `WhatsApp: ${contact} · ` : ""}${checked}`;
+  return `${index + 1}. *${clip(listing.title, 60)}*${facts ? ` · ${facts}` : ""}\n   ${contact ? `WhatsApp: ${contact} · ` : ""}${checked}${web ? `\n   ${listing.sourceUrl}` : ""}`;
 }
 
 interface ListingKind {
@@ -218,6 +218,13 @@ export class ConnectJourneys {
       // The TrustHub app's "Link WhatsApp" button sends this, and sending it proves the person owns this number.
       const linkCode = /^\s*link\s+([0-9a-f]{10})\s*$/i.exec(message);
       if (linkCode) return await this.linkAccount(linkCode[1].toLowerCase(), context, state);
+      if (/\b(?:links?|websites?|site|url|web address)\b/i.test(message) && this.store.sourceWebsites) {
+        const site = requestedWebsite(message, await this.store.sourceWebsites().catch(() => []));
+        if (site) {
+          const body = `Here's the ${site.name} website:\n${site.website}`;
+          return { reply: body, interactive: buttons(body, [["menu.find", "Find a business"], ["btn.menu", "Main menu"]]), state, action: "answer" };
+        }
+      }
       if (GREETING.test(message) || isMenuCommand(message) || chose(message, "btn.menu") || (state && CANCEL.test(message))) return await this.welcome(context, GREETING.test(message));
       // A rating tapped on a "review later" reminder.
       const reminded = /^rate:(TH-\d{4,6}):([1-5])$/i.exec(message);
@@ -912,7 +919,7 @@ export class ConnectJourneys {
     const asked = earlier ? `Earlier in this chat they asked: "${clip(earlier.question, 200)}" and you answered: "${clip(earlier.answer.replace(/\s+/g, " "), 500)}". Their follow-up now: ${question}` : question;
     const worded = this.answerer ? await this.answerer(asked, city, reference, context.assistantName).catch(() => null) : null;
     let body: string;
-    if (worded) body = clipText(worded, 1600);
+    if (worded) body = fitOneMessage(worded);
     else {
       const [pulse, signals, news] = await Promise.all([
         this.store.areaPulse(city, 30).catch(() => null),

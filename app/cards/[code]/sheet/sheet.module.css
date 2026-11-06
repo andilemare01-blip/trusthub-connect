@@ -19,5 +19,5 @@
 .poster .code { max-width: none; gap: 4mm; }
 .poster .code figcaption { font-size: 16pt; }
 .poster .code small { font-size: 11pt; }
-.poster .qr { max-width: 85mm; }
+.poster .qr { max-width: 130mm; }
 @media print { .hint, .warning { display: none; } .page { padding: 0; } @page { size: A4; margin: 10mm; } }

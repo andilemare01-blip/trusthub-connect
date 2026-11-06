@@ -392,3 +392,24 @@ test("reminders are never sent overnight", async () => {
   assert.equal(harare(reminderTime(120, new Date("2026-11-05T20:00:00Z"))), "08:00");
   assert.equal(harare(reminderTime(60, new Date("2026-11-05T23:30:00Z"))), "08:00");
 });
+
+test("a code from the app links this WhatsApp number to that profile, once", async () => {
+  const { store, say } = setup();
+  store.linkCodes.set("abc1234def", { profileId: "7", name: "Tendai Moyo" });
+  const linked = await say("LINK ABC1234DEF");
+  assert.match(linked.reply, /Done, Tendai! Your TrustHub app and WhatsApp are now linked/);
+  assert.equal(store.linkedProfiles.get("101"), "7");
+  const again = await say("link abc1234def");
+  assert.match(again.reply, /expired/);
+});
+
+test("a number or profile that is already linked elsewhere is refused", async () => {
+  const { store, say } = setup();
+  store.linkedProfiles.set("101", "7");
+  store.linkCodes.set("aaaaaaaaaa", { profileId: "8", name: null });
+  assert.match((await say("LINK aaaaaaaaaa")).reply, /already linked to another TrustHub account/);
+  store.linkedProfiles.clear();
+  store.linkedProfiles.set("202", "8");
+  assert.match((await say("LINK aaaaaaaaaa")).reply, /already linked to a different WhatsApp number/);
+  assert.equal(store.linkedProfiles.has("101"), false);
+});

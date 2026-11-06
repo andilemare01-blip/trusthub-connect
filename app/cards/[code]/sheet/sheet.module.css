@@ -1,10 +1,23 @@
 .page { background: #fff; color: #000; font-family: var(--font-geist-sans), system-ui, sans-serif; padding: 12px; }
 .hint { font-size: 14px; }
+.warning { font-size: 16px; font-weight: 700; color: #b3261e; }
 .sheet { width: 190mm; max-width: 100%; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; }
-.slip { height: 68mm; box-sizing: border-box; border: 1px dashed #000; padding: 5mm; display: flex; gap: 4mm; align-items: center; break-inside: avoid; }
-.text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2mm; font-size: 11pt; }
-.text b { font-size: 15pt; }
-.text small { font-size: 8pt; }
-.qr { width: 34mm; flex: none; }
+.slip { height: 68mm; box-sizing: border-box; border: 1px dashed #000; padding: 3mm 4mm; display: flex; flex-direction: column; gap: 1.5mm; break-inside: avoid; overflow: hidden; }
+.text { display: flex; flex-direction: column; font-size: 9pt; line-height: 1.2; }
+.text b { font-size: 12pt; }
+.codes { display: flex; gap: 4mm; justify-content: center; }
+.code { margin: 0; flex: 1 1 0; min-width: 0; max-width: 40mm; text-align: center; display: flex; flex-direction: column; gap: 1mm; }
+.code figcaption { display: flex; flex-direction: column; font-size: 8pt; line-height: 1.15; }
+.code small { font-size: 6.5pt; }
+.qr { width: 100%; max-width: 36mm; margin: 0 auto; }
 .qr svg { width: 100%; height: auto; display: block; }
-@media print { .hint { display: none; } .page { padding: 0; } @page { size: A4; margin: 10mm; } }
+.foot { font-size: 7pt; text-align: center; margin-top: auto; }
+.poster { width: 190mm; max-width: 100%; min-height: 250mm; margin: 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12mm; text-align: center; }
+.poster h1 { font-size: 44pt; line-height: 1; margin: 6mm 0 0; }
+.poster p { font-size: 18pt; margin: 0; }
+.poster .codes { gap: 10mm; width: 100%; }
+.poster .code { max-width: none; gap: 4mm; }
+.poster .code figcaption { font-size: 16pt; }
+.poster .code small { font-size: 11pt; }
+.poster .qr { max-width: 85mm; }
+@media print { .hint, .warning { display: none; } .page { padding: 0; } @page { size: A4; margin: 10mm; } }

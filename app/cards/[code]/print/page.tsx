@@ -19,7 +19,8 @@ export default async function PrintCard({ params, searchParams }: { params: Prom
   const host = (await headers()).get("host");
   const base = process.env.PUBLIC_BASE_URL?.trim() || (host ? `https://${host}` : "");
   const links = cardLinks(base, card.code, process.env.TRUSTHUB_WHATSAPP_NUMBER);
-  const qr = qrSvg(isApp ? links.appQr : links.qr, { size: 300, dark: "#0f4f47" });
+  // The WhatsApp card opens WhatsApp itself, so it works with no browser data.
+  const qr = qrSvg(isApp ? links.appQr : links.whatsapp ?? links.qr, { size: 300, dark: "#0f4f47" });
   const chipLink = isApp ? links.app : links.whatsapp ?? links.nfc;
 
   return (

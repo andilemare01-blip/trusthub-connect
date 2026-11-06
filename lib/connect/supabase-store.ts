@@ -146,6 +146,11 @@ export class SupabaseConnectStore implements ConnectStore {
     if (result.error) throw new ConnectStoreError("Close reminder", result.error);
   }
 
+  async sourceWebsites(): Promise<{ name: string; website: string }[]> {
+    const found = rows(await this.db.from("knowledge_sources").select("name,base_url").eq("benita_enabled", true).limit(50), "Read source websites");
+    return found.filter((row) => typeof row.base_url === "string" && row.base_url).map((row) => ({ name: String(row.name), website: String(row.base_url) }));
+  }
+
   async linkAccount(code: string, identityId: string): Promise<AccountLinkResult> {
     const rpc = this.db.rpc;
     if (!rpc) throw new Error("Linking an account needs the Supabase client.");

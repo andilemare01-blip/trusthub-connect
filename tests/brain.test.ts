@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { brainFallback, isAdviceQuestion, isOpenQuestion } from "../lib/connect/brain.ts";
+import { brainFallback, fitOneMessage, isAdviceQuestion, isOpenQuestion, requestedWebsite } from "../lib/connect/brain.ts";
 import { ConnectJourneys, type ConnectContext } from "../lib/connect/journeys.ts";
 import { InMemoryConnectStore } from "../lib/connect/store.ts";
 
@@ -59,4 +59,30 @@ test("a new person is asked for a name once, it is saved, and the profile shows 
   assert.match(profile?.reply ?? "", /Your recent searches\*\n• plumber in Avondale · Harare/);
   const menuChoice = await engine.handle("9", ctx, hello!.state);
   assert.doesNotMatch(menuChoice?.reply ?? "", /Nice to meet you/, "a menu number is never taken as a name");
+});
+
+test("freelancing questions go to the brain, but finding a freelancer stays a search", () => {
+  for (const text of ["How do I start freelancing from Chiredzi?", "How can I get clients as a graphic designer?", "Can I make money on Fiverr in Zimbabwe?"]) assert.equal(isOpenQuestion(text), true, text);
+  assert.equal(isOpenQuestion("find a freelance designer in Harare"), false);
+});
+
+test("a long answer fits one WhatsApp message and ends on a full sentence", () => {
+  const answer = fitOneMessage("Start small with one service. ".repeat(60));
+  assert.ok(answer.length <= 900);
+  assert.match(answer, /service\.$/);
+});
+
+test("a site is found however it was typed", () => {
+  const sites = [{ name: "Propertybook", website: "https://www.propertybook.co.zw/" }, { name: "CarMusika", website: "https://www.carmusika.com/" }];
+  assert.equal(requestedWebsite("Give me the link to property book.co.zw", sites)?.name, "Propertybook");
+  assert.equal(requestedWebsite("carmusika website please", sites)?.name, "CarMusika");
+  assert.equal(requestedWebsite("houses on propertybook", sites), null);
+  assert.equal(requestedWebsite("link to some other site", sites), null);
+});
+
+test("asking for a known site's link gets the link straight away", async () => {
+  const store = new InMemoryConnectStore(() => NOW);
+  store.websites.push({ name: "Propertybook", website: "https://www.propertybook.co.zw/" });
+  const reply = await new ConnectJourneys(store).handle("Give me the link to property book.co.zw", context, null);
+  assert.match(reply?.reply ?? "", /https:\/\/www\.propertybook\.co\.zw\//);
 });

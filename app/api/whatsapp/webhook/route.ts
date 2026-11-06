@@ -11,6 +11,7 @@ import { diagnosticError, logWhatsAppDiagnostic } from "@/lib/whatsapp/diagnosti
 import { randomUUID } from "node:crypto";
 import { classifyUnusableMetaEvent } from "@/lib/whatsapp/meta-webhook";
 import { recordOperationalEvent } from "@/lib/observability/operational-events";
+import { alreadyBeingAnswered } from "@/lib/whatsapp/webhook-claim";
 
 export const runtime = "nodejs";
 
@@ -80,6 +81,10 @@ export async function POST(request: NextRequest) {
     }
     logWhatsAppDiagnostic(requestId, "sender_message_normalized", { outcome: "passed", textLength: message.text.length, mediaCount: message.media.length });
     const client = createSupabaseServerClient();
+    if (await alreadyBeingAnswered(client as never, message.providerMessageId)) {
+      console.info(JSON.stringify({ event: "whatsapp.inbound", requestId, outcome: "retry_while_answering" }));
+      return respond({ received: true, duplicate: true });
+    }
     const understanding = await createConversationUnderstandingProvider(client).understand(message.text, { idempotencyKey: message.providerMessageId });
     console.info(JSON.stringify({ event: "whatsapp.inbound", requestId, providerMessageId: message.providerMessageId, mediaCount: message.media.length }));
 

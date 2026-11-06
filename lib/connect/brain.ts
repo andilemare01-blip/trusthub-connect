@@ -13,12 +13,31 @@ export function isOpenQuestion(text: string): boolean {
   const message = text.trim();
   if (message.length < 12 || message.length > 500) return false;
   if (/^(?:find|search|looking for|i need|i'?m looking|where can i (?:buy|find|get)|where is|show me|list)\b/i.test(message)) return false;
-  return /\b(advice|advise|recommend|suggest|should i|shall i|is it (?:a )?(?:worth|wise|good|safe|smart|bad)|worth it|how (?:do|can|should|would) i|how to|what (?:business|businesses|kind of business|is the best way|can i sell|sells)|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|ideas? for|tips?|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|compare|difference between|explain|why (?:is|are|do|does)|what do you think|your opinion|trends?|market for)\b/i.test(message);
+  return /\b(freelanc\w*|fiverr|upwork|remote work|work from home|online (?:jobs?|work|income)|earn(?:ing)? (?:money )?online|(?:get|find|finding|getting) clients|how does|advice|advise|recommend|suggest|should i|shall i|is it (?:a )?(?:worth|wise|good|safe|smart|bad)|worth it|how (?:do|can|should|would) i|how to|what (?:business|businesses|kind of business|is the best way|can i sell|sells)|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|ideas? for|tips?|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|compare|difference between|explain|why (?:is|are|do|does)|what do you think|your opinion|trends?|market for)\b/i.test(message);
 }
 
 /** Questions that are about advice or the market even when they name a kind of business. */
 export function isAdviceQuestion(text: string): boolean {
-  return /\b(advice|advise|good idea|should i|shall i|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|worth it|market for|trends?)\b/i.test(text);
+  return /\b(freelanc\w*|fiverr|upwork|remote work|work from home|online (?:jobs?|work|income)|earn(?:ing)? (?:money )?online|(?:get|find|finding|getting) clients|advice|advise|good idea|should i|shall i|in demand|demand for|opportunit\w*|start(?:ing)? (?:a |my )?business|business idea|profitable|make money|side hustle|how much (?:does|do|is|are|would|should)|cost of living|worth it|market for|trends?)\b/i.test(text);
+}
+
+/** Keeps an answer short enough for one WhatsApp message with buttons, ending on a full sentence where it can. */
+export function fitOneMessage(text: string, max = 900): string {
+  const clean = text.trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "), cut.lastIndexOf(".\n"));
+  return end > max / 2 ? cut.slice(0, end + 1) : `${cut.trimEnd()}…`;
+}
+
+/** The website someone named in a request for its link, from the sources TrustHub knows. */
+export function requestedWebsite(text: string, websites: { name: string; website: string }[]): { name: string; website: string } | null {
+  if (!/\b(links?|websites?|site|url|web address)\b/i.test(text)) return null;
+  const squashed = text.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return websites.find((site) => {
+    const host = site.website.replace(/^https?:\/\/(?:www\.)?/i, "").split("/")[0].toLowerCase();
+    return squashed.includes(host.replace(/[^a-z0-9]/g, "")) || squashed.includes(host.split(".")[0]) || squashed.includes(site.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+  }) ?? null;
 }
 
 const money = (value: number) => `$${Math.round(value).toLocaleString("en-US")}`;

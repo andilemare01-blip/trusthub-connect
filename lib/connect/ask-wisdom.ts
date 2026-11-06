@@ -16,14 +16,18 @@ function systemPrompt(assistantName: string): string {
     "Write in clear, correct, natural English with proper grammar and spelling. Do not use Shona or Ndebele words unless the person wrote in them first. Never invent words or greetings.",
     "Behave like a real, caring person who knows Zimbabwe well: listen to what they actually need, pick up on worries between the lines, follow on from what was said earlier in the chat, and speak plainly. If asked, say honestly that you are TrustHub's assistant, not a human.",
     "Be witty and a little sarcastic about situations, the way a clever friend would, but never rude to the person and never mock a business or a customer.",
-    "Answer the person's question using ONLY the TrustHub data provided. Never invent businesses, prices, numbers or facts.",
+    "Think before you answer: work out what the person really wants, then check what the data offers. Reply with the final answer only, and never show your reasoning.",
+    "For anything about real places, businesses, prices, rents, jobs or news in Zimbabwe, use the TrustHub data provided. Never invent businesses, prices, numbers, links or facts.",
+    "For general know-how, answer from your own knowledge with clear, practical steps: freelancing, finding clients, pricing work, CVs, interviews, business skills, how things work. Make it fit someone in Zimbabwe, and do not claim it comes from TrustHub data. Name a platform or tool only when you are sure it exists.",
+    "When the person asks for a link or website and the data has one (websitesWeKnow, link, website), give the full address. Never say you lack a link that is in the data.",
+    "Answer directly. Do not introduce yourself or apologise unless the person asked about you or something went wrong.",
     "When you mention a result from benitaResults, say its trust label in plain words (for example: found online, not checked by TrustHub). Quote publicFacts with their date.",
     "When you use a headline from news, name its source (for example: says NewsDay) and give its link once; never add details the headline and summary do not contain.",
     "townSignals are typical asking prices from TrustHub listings (rents, cars) and money facts with their previous value; say they are asking prices, not guarantees.",
     "For advice questions (starting a business, what sells, what is in demand, where to live), reason like a sharp local consultant: use searchedButNotFound (unmet demand), mostSearched, typicalPrices, townSignals rents and car prices, news and matching listings; give two or three concrete suggestions for that town with the numbers that support them, plus one honest risk.",
     "Talk like a friendly, well-informed neighbour having a good conversation: start with the answer, add one useful insight, and end with a short question or tip that keeps the chat going.",
     "If the data is too thin to answer, say so with a light touch and suggest one practical next step.",
-    "Write for WhatsApp: plain sentences, at most 120 words, no markdown headings, no tables.",
+    "Write for WhatsApp: plain sentences, at most 130 words and under 800 characters, no markdown headings, no tables.",
     "Do not give legal, medical or financial advice; for business decisions, describe what the data shows.",
   ].join(" ");
 }
@@ -31,7 +35,7 @@ function systemPrompt(assistantName: string): string {
 /** Everything TrustHub and Benita hold that bears on a question. Wisdom, the app, the owner's page and admin all read this. */
 export async function gatherAskData(store: ConnectStore, question: string, city: string | null) {
     const words = keywords(question);
-    const [pulse, listings, businesses, benita, facts, news, signals] = await Promise.all([
+    const [pulse, listings, businesses, benita, facts, news, signals, websites] = await Promise.all([
       city ? store.areaPulse(city, 30).catch(() => null) : Promise.resolve(null),
       store.searchListings({ intents: ["offering", "seeking", "recruiting", "job_seeking"], words, city, limit: 8 }).catch(() => []),
       words[0] ? store.searchDirectory(words[0], city, 8).catch(() => []) : Promise.resolve([]),
@@ -39,14 +43,16 @@ export async function gatherAskData(store: ConnectStore, question: string, city:
       store.currentFacts().catch(() => []),
       store.news ? store.news({ text: question, town: city, limit: 5 }).catch(() => []) : Promise.resolve([]),
       city && store.signals ? store.signals(city).catch(() => null) : Promise.resolve(null),
+      store.sourceWebsites ? store.sourceWebsites().catch(() => []) : Promise.resolve([]),
     ]);
     const data = {
       city: city ?? "not given",
+      websitesWeKnow: websites,
       last30Days: pulse ? { mostSearched: pulse.topSearches, searchedButNotFound: pulse.notFound, newBusinesses: pulse.newBusinesses, newListings: pulse.newListings, typicalPrices: pulse.typicalPrices } : "no town given",
-      matchingListings: listings.map((item) => ({ title: item.title, intent: item.intent, price: item.priceText, area: item.area, city: item.city, checked: item.status === "approved" })),
+      matchingListings: listings.map((item) => ({ title: item.title, intent: item.intent, price: item.priceText, area: item.area, city: item.city, checked: item.status === "approved", link: item.sourceUrl ?? null })),
       matchingBusinesses: businesses.map((item) => ({ name: item.name, category: item.category, area: item.area, city: item.city, reviews: item.reviewsCount })),
       // Benita's wider index: every result carries its trust label, which the answer must repeat.
-      benitaResults: benita.map((item) => ({ name: item.name, kind: item.kind, category: item.category ?? item.subcategory, price: item.priceText, area: item.area, city: item.city, trust: item.tierLabel })),
+      benitaResults: benita.map((item) => ({ name: item.name, kind: item.kind, category: item.category ?? item.subcategory, price: item.priceText, area: item.area, city: item.city, trust: item.tierLabel, website: item.website, link: item.sourceUrl })),
       news: news.map((item) => ({ headline: item.title, summary: item.summary, source: item.source, date: item.publishedAt?.slice(0, 10) ?? null, link: item.url })),
       townSignals: signals,
       publicFacts: facts.map((fact) => ({ fact: fact.label, value: fact.value ?? fact.valueText, unit: fact.unit, currency: fact.currency, asOf: fact.effectiveFrom, source: fact.sourceKey })),

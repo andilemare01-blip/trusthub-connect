@@ -228,6 +228,8 @@ export interface ConnectStore {
   /** A reminder sent in the last 12 hours and not yet answered. */
   openReminder(identityId: string): Promise<{ cardCode: string } | null>;
   closeReminder(identityId: string, cardCode: string): Promise<void>;
+  /** The public websites Benita knows, so Wisdom can give their real addresses. */
+  sourceWebsites?(): Promise<{ name: string; website: string }[]>;
   /** Uses a one-time code from the TrustHub app to tie this WhatsApp identity to that app profile. */
   linkAccount(code: string, identityId: string): Promise<AccountLinkResult>;
   /** Counts a card opened on WhatsApp. A wa.me link can only be counted when its message arrives. */
@@ -291,6 +293,7 @@ export class InMemoryConnectStore implements ConnectStore {
   cardOpens: string[] = [];
   reminders: { identityId: string; cardCode: string; businessName: string; dueAt: string; sent: boolean }[] = [];
   ownerFacts = new Map<string, string[]>();
+  websites: { name: string; website: string }[] = [];
   linkCodes = new Map<string, { profileId: string; name: string | null }>();
   linkedProfiles = new Map<string, string>();
   private readonly now: () => string;
@@ -322,6 +325,7 @@ export class InMemoryConnectStore implements ConnectStore {
   async closeReminder(identityId: string, cardCode: string) {
     this.reminders = this.reminders.filter((item) => !(item.identityId === identityId && item.cardCode === cardCode));
   }
+  async sourceWebsites() { return this.websites; }
   async linkAccount(code: string, identityId: string): Promise<AccountLinkResult> {
     const pending = this.linkCodes.get(code);
     if (!pending) return { status: "expired", name: null };

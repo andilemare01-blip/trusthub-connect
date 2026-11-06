@@ -22,7 +22,7 @@ import { benitaLine } from "../benita/index.ts";
 import { intelligenceBrief, intelligenceFallback, isIntelligenceQuestion } from "./intelligence.ts";
 import { brainFallback, isAdviceQuestion, isOpenQuestion } from "./brain.ts";
 import { isDeepCue, isFeedbackCue, isSearchLike, readReviewsQuestion } from "./routes.ts";
-import type { ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
+import type { AccountLinkResult, ConnectStore, DirectoryBusiness, Listing, ListingIntent, ReviewItem } from "./store.ts";
 
 export type ConnectFlow = "review" | "read_reviews" | "add_business" | "listing" | "listing_search" | "buy_sell" | "jobs" | "houses" | "area" | "scam" | "ask" | "feedback" | "brain" | "name";
 type Scalar = string | number | boolean | null;
@@ -197,11 +197,27 @@ export class ConnectJourneys {
     this.now = now;
   }
 
+  private async linkAccount(code: string, context: ConnectContext, state: ConnectJourneyState | null): Promise<ConnectReply> {
+    if (!context.identityId) return { reply: "I couldn't link your account just now. Please try again from the TrustHub app.", state, action: "answer" };
+    const result = await this.store.linkAccount(code, context.identityId);
+    const firstName = firstNameOf(result.name);
+    const replies: Record<AccountLinkResult["status"], string> = {
+      linked: `Done${firstName ? `, ${firstName}` : ""}! Your TrustHub app and WhatsApp are now linked, so we'll know it's you on both.`,
+      expired: "That link has expired. Open your profile in the TrustHub app and tap Link WhatsApp again.",
+      phone_taken: "This WhatsApp number is already linked to another TrustHub account.",
+      profile_taken: "That TrustHub account is already linked to a different WhatsApp number.",
+    };
+    return { reply: replies[result.status], state, action: "answer" };
+  }
+
   /** Handles the turn, or returns null when the coordinator should handle it instead. */
   async handle(text: string, context: ConnectContext, state: ConnectJourneyState | null): Promise<ConnectReply | null> {
     const message = text.trim();
     if (!message) return state ? this.repeat(state) : null;
     try {
+      // The TrustHub app's "Link WhatsApp" button sends this, and sending it proves the person owns this number.
+      const linkCode = /^\s*link\s+([0-9a-f]{10})\s*$/i.exec(message);
+      if (linkCode) return await this.linkAccount(linkCode[1].toLowerCase(), context, state);
       if (GREETING.test(message) || isMenuCommand(message) || chose(message, "btn.menu") || (state && CANCEL.test(message))) return await this.welcome(context, GREETING.test(message));
       // A rating tapped on a "review later" reminder.
       const reminded = /^rate:(TH-\d{4,6}):([1-5])$/i.exec(message);

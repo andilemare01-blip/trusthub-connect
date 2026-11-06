@@ -13,7 +13,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ cod
   const code = normalizeCardCode(raw);
   if (!code) return NextResponse.json({ error: "Unknown card." }, { status: 404 });
   const base = process.env.PUBLIC_BASE_URL?.trim() || request.nextUrl.origin;
-  const svg = qrSvg(cardLinks(base, code).qr, { size: 512, dark: "#0f4f47" });
+  const links = cardLinks(base, code, process.env.TRUSTHUB_WHATSAPP_NUMBER);
+  // The WhatsApp link opens WhatsApp itself, so the code works with no browser data.
+  const svg = qrSvg(links.whatsapp ?? links.qr, { size: 512, dark: "#0f4f47" });
   return new NextResponse(svg, {
     headers: {
       "Content-Type": "image/svg+xml; charset=utf-8",

@@ -5,7 +5,7 @@
  * with row contents or phone numbers.
  */
 import type { NewsItem, PersonSummary, TownSignals } from "./store.ts";
-import type { AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
+import type { AccountLinkResult, AreaPulse, ConnectStore, CreditReason, DirectoryBusiness, IdentityActivity, Listing, ListingQuery, NewBusinessSubmission, NewListing, NewReview, ReviewCard, ReviewItem, ReviewQuery, ScamSummary, SearchLogEntry } from "./store.ts";
 import { median, reviewMatches } from "./store.ts";
 import { liveFacts } from "./cards.ts";
 import { listingPrice, refineListings } from "./store.ts";
@@ -144,6 +144,15 @@ export class SupabaseConnectStore implements ConnectStore {
   async closeReminder(identityId: string, cardCode: string): Promise<void> {
     const result = await this.db.from("connect_review_reminders").update({ status: "done" }).eq("whatsapp_identity_id", identity(identityId)).eq("card_code", cardCode).in("status", ["scheduled", "sent"]);
     if (result.error) throw new ConnectStoreError("Close reminder", result.error);
+  }
+
+  async linkAccount(code: string, identityId: string): Promise<AccountLinkResult> {
+    const rpc = this.db.rpc;
+    if (!rpc) throw new Error("Linking an account needs the Supabase client.");
+    const { data, error } = await rpc.call(this.db, "connect_finish_link", { p_code: code, p_identity: identityId });
+    if (error) throw new ConnectStoreError("Link account", error);
+    const result = (data ?? {}) as { status?: AccountLinkResult["status"]; name?: string | null };
+    return { status: result.status ?? "expired", name: result.name ?? null };
   }
 
   async recordCardOpen(cardId: string): Promise<void> {

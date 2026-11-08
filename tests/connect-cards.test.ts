@@ -47,3 +47,15 @@ test("the QR SVG keeps a quiet zone and uses the requested colour", () => {
   assert.match(svg, /viewBox="0 0 29 29"/);
   assert.match(svg, /fill="#0f4f47"/);
 });
+
+test("the branded QR picture carries the business name, card code and a working code", async () => {
+  const { qrCardSvg, qrCardFileName } = await import("../lib/connect/qr-card.ts");
+  const svg = qrCardSvg({ link: "https://wa.me/263771234567?text=REVIEW%20TH-1042", businessName: "Café <Nush> & Co", code: "TH-1042" });
+  assert.match(svg, /^<svg xmlns="http:\/\/www.w3.org\/2000\/svg"/);
+  assert.ok(svg.includes("Café &lt;Nush&gt; &amp; Co"));
+  assert.ok(svg.includes("Card TH-1042"));
+  assert.ok(svg.includes("Scan to review us on WhatsApp"));
+  assert.equal(qrCardFileName("Café Nush", "TH-1042"), "Cafe-Nush-TH-1042-QR.png");
+  assert.equal(qrCardFileName("Gava’s", "TH-1042"), "Gavas-TH-1042-QR.png");
+  assert.equal(qrCardFileName("", "TH-1042"), "TH-1042-QR.png");
+});

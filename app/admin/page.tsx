@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./admin.module.css";
 import { BusinessView } from "./business-view";
+import { QR_CARD_HEIGHT, QR_CARD_WIDTH, qrCardFileName, qrCardSvg } from "@/lib/connect/qr-card";
 
 type RangeKey = "today" | "7d" | "30d";
 type View = "founder" | "business" | "benita" | "overview" | "people" | "agents" | "check" | "cards" | "health" | "try";
@@ -666,6 +667,42 @@ function Cards({ api }: { api: Api }) {
     } catch (failure) { setCopied(null); setError(failure instanceof Error ? `The card wasn't written: ${failure.message}` : "The card wasn't written. Try again."); }
   }
 
+  /** Saves the branded QR picture for a card as a PNG, ready to send to the business on WhatsApp or to print. */
+  async function downloadQrImage(card: Card) {
+    const link = card.links.whatsapp ?? card.links.qr;
+    const name = card.businessName ?? "Our business";
+    try {
+      setError(null);
+      const svg = qrCardSvg({ link, businessName: name, code: card.code, caption: card.links.whatsapp ? "Scan to review us on WhatsApp" : "Scan to review us" });
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("The picture could not be drawn."));
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      });
+      const scale = 2; // 2000 × 2600 px: sharp on phones and in print
+      const canvas = document.createElement("canvas");
+      canvas.width = QR_CARD_WIDTH * scale;
+      canvas.height = QR_CARD_HEIGHT * scale;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("This browser can't make pictures.");
+      context.imageSmoothingEnabled = false;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("The picture could not be saved.");
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = qrCardFileName(name, card.code);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setCopied(`QR picture for ${card.code} saved. Send it to the business.`);
+      setTimeout(() => setCopied(null), 3000);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "The QR picture could not be made."); }
+  }
+
   async function copy(text: string, label: string) {
     try { await navigator.clipboard.writeText(text); setCopied(label); setTimeout(() => setCopied(null), 2000); } catch { setCopied(null); }
   }
@@ -693,6 +730,7 @@ function Cards({ api }: { api: Api }) {
                       <td><span className={card.status === "active" ? styles.statusOn : styles.statusOff}>{card.status === "active" ? "Active" : card.status === "paused" ? "Paused" : "Unassigned"}</span></td>
                       <td>{card.taps}</td><td>{card.reviews}</td><td>{card.newUsers}</td>
                       <td className={styles.rowActions}>
+                        <button type="button" className={styles.linkBtn} onClick={() => void downloadQrImage(card)}><b>Generate QR code</b></button>
                         {card.links.whatsapp ? <button type="button" className={styles.linkBtn} onClick={() => void copy(card.links.whatsapp!, `WhatsApp link for ${card.code} copied. Paste it into NFC Tools.`)}>Copy WhatsApp link</button> : null}
                         <button type="button" className={styles.linkBtn} onClick={() => void copy(card.links.app, `App link for ${card.code} copied. Paste it into NFC Tools.`)}>Copy app link</button>
                         {card.links.whatsapp ? <a className={styles.linkBtn} href={`/cards/${card.code}/print`} target="_blank" rel="noreferrer">Print WhatsApp card</a> : null}

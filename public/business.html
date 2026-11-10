@@ -771,6 +771,7 @@ function viewPage(v){
 }
 
 /* ---------- PLANS ---------- */
+const PAY_NUMBER = "078 113 0353";
 const PACKS = [ { k:"tokens_small", name:"50 tokens", price:5, note:"For example: 20 review replies, 20 questions and a report" }, { k:"tokens_large", name:"200 tokens", price:15, note:"Best value, for busy businesses" } ];
 const STATUS = { pending:"Being checked", confirmed:"Confirmed", rejected:"Not received" };
 const PRODUCT = { website:"Website", tokens_small:"50 tokens", tokens_large:"200 tokens", growth:"Growth", pro:"Pro", other:"Other" };
@@ -782,18 +783,24 @@ function viewPlan(v){
       <div>${[["Ask Benita a question","1"],["Reply to a review","1"],["Write a post","1"],["Market check","3"],["Full report with a proposed menu or offers","10"]].map(([a,b]) => `<div class="result"><span>${a}</span><b class="num">${b}</b></div>`).join("")}</div><p class="muted" style="margin:0;font-size:14px">Tokens never expire.</p>
       ${PACKS.map(p => `<div class="result"><div><b>${p.name} · $${p.price}</b><div class="muted" style="font-size:13px">${p.note}</div></div><button class="btn sm" data-buy="${p.k}">Buy</button></div>`).join("")}</section>
     ${(S.x?.payments||[]).length ? `<section class="panel"><h2>Your payments</h2>${S.x.payments.map(p => `<div class="result"><div><b>${esc(PRODUCT[p.product]||p.product)}</b><div class="muted" style="font-size:13px">${ago(p.created_at)}</div></div><span>${p.amount ? "$"+esc(p.amount) : ""} · ${esc(STATUS[p.status]||p.status)}</span></div>`).join("")}</section>` : ""}
-    <section class="panel"><h2>How paying works</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Pay with EcoCash, InnBucks, OneMoney, bank transfer or cash at a Trusthub agent. Enter your payment reference here and we add your tokens, usually the same day.</p></section>`;
+    <section class="panel"><h2>How paying works</h2><p class="muted" style="margin:6px 0 0;font-size:14px">Tap Buy, send the amount by EcoCash to <b class="num">${PAY_NUMBER}</b>, then paste the confirmation code from your EcoCash SMS. We add your tokens as soon as we confirm the payment, usually the same day.</p></section>`;
   v.querySelectorAll("[data-buy]").forEach(x => x.onclick = () => {
     const p = PLANS.find(z => z.k === x.dataset.buy) || PACKS.find(z => z.k === x.dataset.buy), monthly = !!PLANS.find(z => z.k === x.dataset.buy);
     const site = !S.x?.hasWebsite && !S.x?.boughtWebsite;
     sheet(`<h2>${p.name} · $${p.price}${monthly ? " a month" : ""}</h2>
-      <label>How did you pay?<select id="payM"><option>EcoCash</option><option>InnBucks</option><option>OneMoney</option><option>Bank transfer</option><option>Cash to agent</option></select></label>
-      <label>Payment reference<input id="payR" placeholder="e.g. the EcoCash confirmation code"></label>
-      <p class="muted" style="margin:0;font-size:13px">Ask your Trusthub agent for the payment number if you don't have it.</p>
+      <div class="lock" style="flex-direction:column;align-items:stretch;gap:6px"><b>Pay by EcoCash</b>
+        <span style="font-size:14px">1. Dial *151# and send <b>$${p.price}</b> to <b class="num">${PAY_NUMBER}</b>.</span>
+        <span style="font-size:14px">2. Wait for the EcoCash SMS and copy its confirmation code.</span>
+        <span style="font-size:14px">3. Paste the code below and tap Send for approval.</span>
+        <div class="row"><a class="btn sm" href="tel:${PAY_NUMBER.replace(/\s/g,"")}" style="text-decoration:none">Call / dial number</a><button type="button" class="btn ghost sm" data-copynum>Copy number</button></div></div>
+      <label>How did you pay?<select id="payM"><option>EcoCash</option><option>Cash to agent</option></select></label>
+      <label>EcoCash confirmation code<input id="payR" placeholder="e.g. MP261110.1132.A12345"></label>
+      <p class="muted" style="margin:0;font-size:13px">Your tokens are added once we confirm the money arrived.</p>
       ${site ? `<div class="lock"><span><b>Need a website too?</b> A fresh site with a strong domain, from $${esc(S.x?.websiteFrom || "30")}.</span><button class="btn seal sm" data-site>Ask an agent</button></div>` : ""}
       <div class="row"><button class="btn" data-req>Send for approval</button><button class="btn ghost" data-close>Cancel</button></div>`, s => {
         s.querySelector("[data-site]")?.addEventListener("click", () => openChat("payment"));
         s.querySelector("[data-close]").onclick = () => s.remove();
+        s.querySelector("[data-copynum]").onclick = () => { try { navigator.clipboard.writeText(PAY_NUMBER.replace(/\s/g,"")).then(() => toast("Number copied"), () => toast(PAY_NUMBER)); } catch(e){ toast(PAY_NUMBER); } };
         s.querySelector("[data-req]").onclick = async () => { const ref = s.querySelector("#payR").value.trim(); if (!ref) return toast("Add the payment reference."); try { await S.api.pay(S.bizId, p.k, s.querySelector("#payM").value, ref); s.remove(); toast("Sent. We'll confirm shortly."); await refresh(); } catch(e){ toast(e.message); } };
     });
   });

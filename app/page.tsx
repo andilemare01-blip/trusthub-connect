@@ -48,7 +48,7 @@ export default function Home() {
       <section className={styles.doors} id="start">
         <h2>Where do you fit in?</h2>
         <div className={styles.door}>
-          <a className={styles.doorMain} href="/business"><strong>I run a business</strong><span>Claim your page, answer your reviews and get advice from Benita, our AI advisor. It&apos;s free to start.</span></a>
+          <a className={styles.doorMain} href="/business?signin=1"><strong>I run a business</strong><span>Claim your page, answer your reviews and get advice from Benita, our AI advisor. It&apos;s free to start.</span></a>
           <a className={styles.doorSide} href="/business?sample=1">See a sample first</a>
         </div>
         <div className={styles.door}>
